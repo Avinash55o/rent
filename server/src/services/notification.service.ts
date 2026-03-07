@@ -51,12 +51,6 @@ export async function sendEmail(
 }
 
 // ── Email via Google Gmail API (Free) ──────────────
-
-function encodeBase64Url(str: string): string {
-    const base64 = btoa(unescape(encodeURIComponent(str)));
-    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
 export async function sendEmailViaGmail(
     env: Env,
     params: SendEmailParams
@@ -90,7 +84,10 @@ export async function sendEmailViaGmail(
         }
 
         // 2. Format the email into base64url format required by Gmail API
-        const emailHeader = `To: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n`;
+        const emailHeader = `From: ${env.GMAIL_FROM_MAIL}
+            To: ${to}
+            Subject: ${subject}
+            Content-Type: text/html; charset=utf-8`;
         const fullEmail = emailHeader + html;
         const encodedEmail = encodeBase64Url(fullEmail);
 
@@ -274,9 +271,16 @@ export async function sendOverdueReminder(
 
 // ── Helpers ────────────────────────────────────────
 
-function normalizePhone(phone: string): string {
-    const digits = phone.replace(/\D/g, "");
-    if (digits.startsWith("91") && digits.length === 12) return digits;
-    if (digits.length === 10) return `91${digits}`;
-    return digits;
+function encodeBase64Url(str: string): string {
+    const bytes = new TextEncoder().encode(str);
+    let binary = "";
+    for (const b of bytes) {
+        binary += String.fromCharCode(b);
+    }
+    const base64 = btoa(binary);
+
+    return base64
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
 }

@@ -25,6 +25,7 @@ export type Env = {
     // Resend (email — primary)
     RESEND_API_KEY: string;
     RESEND_FROM_EMAIL: string;
+    GMAIL_FROM_MAIL: string;
 
     // WhatsApp (optional — for future use)
     WHATSAPP_API_URL?: string;
