@@ -15,11 +15,12 @@ export type Env = {
     RAZORPAY_KEY_SECRET: string;
     RAZORPAY_WEBHOOK_SECRET: string;
 
-    // Google OAuth
+    // Google OAuth (Also used for Gmail API)
     GOOGLE_CLIENT_ID: string;
     GOOGLE_CLIENT_SECRET: string;
     GOOGLE_REDIRECT_URI: string;
     FRONTEND_URL: string;
+    GOOGLE_REFRESH_TOKEN?: string;
 
     // Resend (email — primary)
     RESEND_API_KEY: string;
