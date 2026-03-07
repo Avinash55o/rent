@@ -3,7 +3,7 @@ import { invoices, notificationLogs, tenantProfiles, users } from "../db/schema"
 import type { AppDB } from "../db/drizzle";
 import type { Env } from "../types";
 
-// ── Email via Resend ───────────────────────────────
+// ── Email ──────────────────────────────────────────
 
 export interface SendEmailParams {
     to: string;
@@ -15,6 +15,12 @@ export async function sendEmail(
     env: Env,
     params: SendEmailParams
 ): Promise<boolean> {
+    // If GOOGLE_REFRESH_TOKEN is present, use Gmail API (Free)
+    if (env.GOOGLE_REFRESH_TOKEN) {
+        return sendEmailViaGmail(env, params);
+    }
+
+    // Otherwise fallback to Resend
     const { to, subject, html } = params;
 
     try {
@@ -34,12 +40,77 @@ export async function sendEmail(
 
         if (!res.ok) {
             const error = await res.text();
-            console.error("[Email] Failed to send:", error);
+            console.error("[Email] Failed to send via Resend:", error);
             return false;
         }
         return true;
     } catch (error: any) {
-        console.error("[Email] Failed to send:", error.message);
+        console.error("[Email] Failed to send via Resend:", error.message);
+        return false;
+    }
+}
+
+// ── Email via Google Gmail API (Free) ──────────────
+
+function encodeBase64Url(str: string): string {
+    const base64 = btoa(unescape(encodeURIComponent(str)));
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+export async function sendEmailViaGmail(
+    env: Env,
+    params: SendEmailParams
+): Promise<boolean> {
+    const { to, subject, html } = params;
+
+    if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.GOOGLE_REFRESH_TOKEN) {
+        console.error("[Gmail] Missing Google credentials in Env");
+        return false;
+    }
+
+    try {
+        // 1. Get a fresh Access Token using the Refresh Token
+        const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                client_id: env.GOOGLE_CLIENT_ID,
+                client_secret: env.GOOGLE_CLIENT_SECRET,
+                refresh_token: env.GOOGLE_REFRESH_TOKEN,
+                grant_type: "refresh_token"
+            }).toString()
+        });
+
+        const tokenData: any = await tokenRes.json();
+        const accessToken = tokenData.access_token;
+
+        if (!accessToken) {
+            console.error("[Gmail] Failed to get Access Token:", tokenData);
+            return false;
+        }
+
+        // 2. Format the email into base64url format required by Gmail API
+        const emailHeader = `To: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n`;
+        const fullEmail = emailHeader + html;
+        const encodedEmail = encodeBase64Url(fullEmail);
+
+        // 3. Send via Gmail API
+        const sendRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${accessToken}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ raw: encodedEmail })
+        });
+
+        if (!sendRes.ok) {
+            console.error("[Gmail] Failed to send via Gmail API:", await sendRes.text());
+            return false;
+        }
+        return true;
+    } catch (error: any) {
+        console.error("[Gmail] Error sending email via Gmail API:", error.message);
         return false;
     }
 }
