@@ -19,16 +19,18 @@ import { ok, err } from "../types/api";
 import { createDb } from "../db/client";
 import { users } from "../db/schema";
 import { signupSchema, loginSchema, updateProfileSchema, googleCallbackSchema } from "../validators";
-import { hashPassword, verifyPassword, nowISO, omit } from "../utils";
+import { hashPassword, verifyPassword, nowISO, omit, createOAuthState, verifyOAuthState } from "../utils";
 import { signJwt, requireAuth } from "../middleware/auth";
 import { getGoogleAuthUrl, exchangeCodeForProfile } from "../services/google.service";
+import { loginRateLimit, signupRateLimit, resetRateLimit, getRateLimitKey } from "../middleware/rateLimit";
 
 type Variables = { user: JwtPayload };
 
 const auth = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 // ─── POST /api/auth/signup ────────────────────────────────────
-auth.post("/signup", zValidator("json", signupSchema), async (c) => {
+// Rate limited: 3 signups per hour per IP
+auth.post("/signup", signupRateLimit(), zValidator("json", signupSchema), async (c) => {
     const body = c.req.valid("json");
     const db = createDb(c.env.DB);
 
@@ -68,7 +70,8 @@ auth.post("/signup", zValidator("json", signupSchema), async (c) => {
 });
 
 // ─── POST /api/auth/login ─────────────────────────────────────
-auth.post("/login", zValidator("json", loginSchema), async (c) => {
+// Rate limited: 5 login attempts per 15 minutes per IP
+auth.post("/login", loginRateLimit(), zValidator("json", loginSchema), async (c) => {
     const { email, password } = c.req.valid("json");
     const db = createDb(c.env.DB);
 
@@ -94,6 +97,12 @@ auth.post("/login", zValidator("json", loginSchema), async (c) => {
         c.env.JWT_SECRET
     );
 
+    // Reset rate limit on successful login
+    const ip = c.req.header("CF-Connecting-IP") ||
+               c.req.header("X-Forwarded-For")?.split(",")[0] ||
+               "unknown";
+    resetRateLimit(getRateLimitKey("login", ip));
+
     return c.json(
         ok({
             token,
@@ -105,16 +114,23 @@ auth.post("/login", zValidator("json", loginSchema), async (c) => {
 
 // Frontend calls this to get the Google login URL, then redirects user there
 auth.get("/google", async (c) => {
-    // Generate a random state parameter to prevent CSRF attacks
-    const state = crypto.randomUUID();
+    // Generate a signed state parameter to prevent CSRF attacks
+    // The state is signed with JWT_SECRET and expires after 10 minutes
+    const state = await createOAuthState(c.env.JWT_SECRET);
     const url = await getGoogleAuthUrl(c.env.GOOGLE_CLIENT_ID, c.env.GOOGLE_REDIRECT_URI, state);
     return c.json(ok({ url, state }));
 });
 
 // Frontend sends the `code` it received from Google after user logs in
 auth.post("/google/callback", zValidator("json", googleCallbackSchema), async (c) => {
-    const { code } = c.req.valid("json");
+    const { code, state } = c.req.valid("json");
     if (!code) return c.json(err("Missing code"), 400);
+
+    // Verify the state parameter to prevent CSRF attacks
+    const isValidState = await verifyOAuthState(state, c.env.JWT_SECRET);
+    if (!isValidState) {
+        return c.json(err("Invalid or expired state parameter - possible CSRF attack"), 400);
+    }
 
     const db = createDb(c.env.DB);
 

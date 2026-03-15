@@ -22,7 +22,7 @@ import { updateRentSchema, updateSettingsSchema, adminCreateTenantSchema } from 
 import { requireAdmin } from "../middleware/auth";
 import { getAllSettings, updateSettings } from "../services/settings.service";
 import { getTenantPayments } from "../services/payment.service";
-import { omit, hashPassword, nowISO } from "../utils";
+import { omit, hashPassword, nowISO, escapeCSV } from "../utils";
 
 type Variables = { user: JwtPayload };
 
@@ -393,7 +393,7 @@ adminRoute.get("/export/payments", async (c) => {
             p.id, p.tenantName ?? "", p.tenantEmail ?? "", p.amount, p.lateFee,
             p.rentMonth, p.type, p.status, p.razorpayPaymentId ?? "", p.paidAt ?? "",
         ]
-            .map((v) => `"${v}"`)
+            .map(escapeCSV)
             .join(",")
     );
 
@@ -437,7 +437,7 @@ adminRoute.get("/export/tenants", async (c) => {
             t.id, t.name, t.email, t.phone, t.isActive ? "Yes" : "No",
             t.createdAt, t.room ?? "", t.bed ?? "", t.monthlyRent ?? "", t.moveInDate ?? "",
         ]
-            .map((v) => `"${v}"`)
+            .map(escapeCSV)
             .join(",")
     );
 

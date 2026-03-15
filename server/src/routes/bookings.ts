@@ -93,29 +93,46 @@ bookingsRoute.post(
         if (!booking) return c.json(err("Failed to create booking"), 500);
 
         // Create Razorpay order for deposit
+        // If this fails, we need to rollback the booking
         const receipt = generateReceiptNumber();
-        const order = await createRazorpayOrder(
-            c.env.RAZORPAY_KEY_ID,
-            c.env.RAZORPAY_KEY_SECRET,
-            {
+        let order;
+        try {
+            order = await createRazorpayOrder(
+                c.env.RAZORPAY_KEY_ID,
+                c.env.RAZORPAY_KEY_SECRET,
+                {
+                    amount: depositAmount,
+                    receipt,
+                    notes: { tenantName: tenant.name, type: "deposit" },
+                }
+            );
+        } catch (razorpayError) {
+            // Rollback: delete the booking we just created
+            await db.delete(bookings).where(eq(bookings.id, booking.id));
+            console.error("Razorpay order creation failed:", razorpayError);
+            return c.json(err("Payment gateway error. Please try again."), 500);
+        }
+
+        // Create deposit record and mark bed as reserved
+        // These operations should be atomic
+        try {
+            await db.insert(deposits).values({
+                bookingId: booking.id,
+                tenantId,
                 amount: depositAmount,
-                receipt,
-                notes: { tenantName: tenant.name, type: "deposit" },
-            }
-        );
+                status: "held",
+                razorpayOrderId: order.id,
+                createdAt: now,
+            });
 
-        // Create deposit record (not yet paid)
-        await db.insert(deposits).values({
-            bookingId: booking.id,
-            tenantId,
-            amount: depositAmount,
-            status: "held",
-            razorpayOrderId: order.id,
-            createdAt: now,
-        });
-
-        // Mark bed as "reserved" while waiting for deposit payment
-        await db.update(beds).set({ status: "reserved" }).where(eq(beds.id, bedId));
+            // Mark bed as "reserved" while waiting for deposit payment
+            await db.update(beds).set({ status: "reserved" }).where(eq(beds.id, bedId));
+        } catch (dbError) {
+            // Rollback: delete booking (Razorpay order will expire on its own)
+            await db.delete(bookings).where(eq(bookings.id, booking.id));
+            console.error("Database error during booking finalization:", dbError);
+            return c.json(err("Failed to finalize booking. Please try again."), 500);
+        }
 
         return c.json(
             ok({
@@ -295,6 +312,37 @@ bookingsRoute.post(
         if (!booking) return c.json(err("Booking not found"), 404);
         if (booking.status === "ended") {
             return c.json(err("Booking is already ended"), 409);
+        }
+
+        // Get the deposit to validate refund amounts
+        const deposit = await db
+            .select()
+            .from(deposits)
+            .where(eq(deposits.bookingId, bookingId))
+            .get();
+
+        if (!deposit) {
+            return c.json(err("Deposit record not found for this booking"), 404);
+        }
+
+        // Validate that refund + deduction equals original deposit amount
+        const totalRefundAndDeduction = body.refundAmount + body.deductionAmount;
+        if (totalRefundAndDeduction !== deposit.amount) {
+            return c.json(
+                err(
+                    `Invalid amounts: Refund (${body.refundAmount}) + Deduction (${body.deductionAmount}) = ${totalRefundAndDeduction} ` +
+                    `does not equal original deposit amount (${deposit.amount})`
+                ),
+                400
+            );
+        }
+
+        // Validate deduction reason is provided when deducting
+        if (body.deductionAmount > 0 && !body.deductionReason?.trim()) {
+            return c.json(
+                err("Deduction reason is required when deducting from deposit"),
+                400
+            );
         }
 
         const now = nowISO();

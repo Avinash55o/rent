@@ -38,17 +38,23 @@ const app = new Hono<{ Bindings: Env }>();
 
 // ─── Global Middleware ────────────────────────────────────────
 
-// CORS: Allow requests from your frontend domain
-// In production, change origin to your actual frontend URL
-app.use(
-  "*",
-  cors({
-    origin: ["http://localhost:3000", "https://your-frontend-domain.com"],
+// CORS: Allow requests from configured frontend domains
+// Configure via ALLOWED_ORIGINS environment variable (comma-separated)
+// Example: ALLOWED_ORIGINS=http://localhost:3000,https://myapp.com
+app.use("*", async (c, next) => {
+  const allowedOrigins = c.env.ALLOWED_ORIGINS
+    ? c.env.ALLOWED_ORIGINS.split(",").map((o: string) => o.trim())
+    : ["http://localhost:3000"];
+
+  const corsMiddleware = cors({
+    origin: allowedOrigins,
     allowHeaders: ["Content-Type", "Authorization"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
-  })
-);
+  });
+
+  return corsMiddleware(c, next);
+});
 
 // Logger: Logs request method, path, and status to console (visible in wrangler dev)
 app.use("*", logger());
