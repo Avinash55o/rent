@@ -17,6 +17,7 @@ import {
   MapPin,
   Shield,
 } from "lucide-react";
+import { DashboardSkeleton } from "@/components/Skeleton";
 
 interface BookingData {
   booking: {
@@ -107,7 +108,7 @@ export default function DashboardPage() {
     }
   };
 
-  if (loading) return <LoadingSpinner text="Loading dashboard..." />;
+  if (loading) return <DashboardSkeleton />;
 
   if (noBooking) {
     return (
@@ -200,7 +201,7 @@ export default function DashboardPage() {
       {/* Pay Rent Button */}
       {booking.status === "active" && (
         <div className="card bg-primary/5 border border-primary/20">
-          <div className="card-body flex-row items-center justify-between">
+          <div className="card-body flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
               <h3 className="font-bold text-lg flex items-center gap-2">
                 <CreditCard className="h-5 w-5" /> Pay Monthly Rent
@@ -211,7 +212,7 @@ export default function DashboardPage() {
             </div>
             <button
               onClick={handlePayRent}
-              className={`btn btn-primary ${payingRent ? "btn-disabled" : ""}`}
+              className={`btn btn-primary w-full sm:w-auto ${payingRent ? "btn-disabled" : ""}`}
               disabled={payingRent}
             >
               {payingRent ? (

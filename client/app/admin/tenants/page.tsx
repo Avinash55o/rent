@@ -8,6 +8,7 @@ import { Modal } from "@/components/Modal";
 import toast from "react-hot-toast";
 import Link from "next/link";
 import { Users, Plus, Eye, UserMinus } from "lucide-react";
+import { TableSkeleton } from "@/components/Skeleton";
 
 interface Tenant {
   id: number;
@@ -126,11 +127,22 @@ export default function AdminTenantsPage() {
     }
   };
 
-  if (loading) return <LoadingSpinner text="Loading tenants..." />;
+  if (loading) {
+    return (
+      <div>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Users className="h-6 w-6" /> Tenants
+          </h1>
+        </div>
+        <TableSkeleton rows={5} />
+      </div>
+    );
+  }
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Users className="h-6 w-6" /> Tenants
         </h1>
