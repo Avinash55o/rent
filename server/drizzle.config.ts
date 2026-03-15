@@ -1,8 +1,8 @@
-import { defineConfig } from "drizzle-kit";
+import type { Config } from "drizzle-kit";
 
-export default defineConfig({
-    out: "./drizzle",           // migration output directory
-    schema: "./src/db/schema.ts",
-    dialect: "sqlite",          // D1 = SQLite
-    driver: "d1-http",
-});
+export default {
+  schema: "./src/db/schema.ts",
+  out: "./migrations",
+  dialect: "sqlite",       // D1 uses SQLite under the hood
+  driver: "d1-http",
+} satisfies Config;

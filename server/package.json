@@ -1,24 +1,26 @@
 {
-  "name": "server",
-  "type": "module",
+  "name": "rent",
+  "version": "1.0.0",
+  "description": "rent payment system",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy --minify",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "deploy": "wrangler deploy",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "wrangler d1 migrations apply rent-db --local",
-    "db:migrate:prod": "wrangler d1 migrations apply rent-db --remote"
+    "db:migrate:local": "wrangler d1 migrations apply rent --local",
+    "db:migrate:remote": "wrangler d1 migrations apply rent --remote",
+    "db:studio": "drizzle-kit studio",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.7.6",
     "drizzle-orm": "^0.45.1",
-    "hono": "^4.12.5",
+    "hono": "^4.12.7",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250306.0",
-    "drizzle-kit": "^0.31.0",
+    "@cloudflare/workers-types": "^4.20260312.1",
+    "drizzle-kit": "^0.31.9",
     "typescript": "^5.9.3",
-    "wrangler": "^4.70.0"
+    "wrangler": "^4.72.0"
   }
 }

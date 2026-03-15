@@ -1,167 +1,228 @@
-import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { relations } from "drizzle-orm";
 
-// ── Users ──────────────────────────────────────────
-export const users = sqliteTable("users", {
-    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    email: text("email").notNull().unique(),
-    name: text("name"),
-    phone: text("phone"),
-    passwordHash: text("password_hash"),
-    googleId: text("google_id"),
-    role: text("role", { enum: ["admin", "tenant"] }).notNull().default("tenant"),
-    createdAt: integer("created_at", { mode: "timestamp" })
-        .$defaultFn(() => new Date()).notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp" })
-        .$defaultFn(() => new Date()).notNull(),
+// ─────────────────────────────────────────────────────────────
+// ROOMS
+// Each room has a name (e.g. "Room 1") and optional description.
+// Beds belong to rooms.
+// ─────────────────────────────────────────────────────────────
+export const rooms = sqliteTable("rooms", {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    name: text("name").notNull(),                         // e.g. "Room 1"
+    description: text("description"),                     // optional notes
+    createdAt: text("created_at").notNull(),
 });
 
-// ── Tenant Profiles ────────────────────────────────
-export const tenantProfiles = sqliteTable("tenant_profiles", {
-    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    userId: text("user_id").references(() => users.id).notNull(),
-    roomNumber: text("room_number"),
-    rentAmount: text("rent_amount").notNull(),
-    depositAmount: text("deposit_amount").notNull(),
-    joinDate: text("join_date").notNull(),             // "YYYY-MM-DD"
-    nextDueDate: text("next_due_date"),
-    graceLastDate: text("grace_last_date"),
-    isActive: integer("is_active", { mode: "boolean" }).default(true),
-    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-}, (table) => [
-    index("tenant_profiles_user_id_idx").on(table.userId),
-]);
+// ─────────────────────────────────────────────────────────────
+// BEDS
+// Each bed belongs to a room and has a status.
+// Status transitions: available → reserved → occupied → available
+// ─────────────────────────────────────────────────────────────
+export const beds = sqliteTable("beds", {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    roomId: integer("room_id").notNull().references(() => rooms.id),
+    name: text("name").notNull(),                         // e.g. "Bed 1"
+    status: text("status", {
+        enum: ["available", "reserved", "occupied"],
+    }).notNull().default("available"),
+    monthlyRent: real("monthly_rent").notNull().default(5000), // per-bed rent
+    createdAt: text("created_at").notNull(),
+}, (table) => ([
+    index("idx_beds_room_id").on(table.roomId),
+    index("idx_beds_status").on(table.status),
+]));
 
-// ── Invoices ───────────────────────────────────────
-export const invoices = sqliteTable("invoices", {
-    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    tenantId: text("tenant_id").references(() => tenantProfiles.id).notNull(),
-    billingMonth: text("billing_month").notNull(),
-    amount: text("amount").notNull(),
-    status: text("status", { enum: ["pending", "paid", "overdue"] })
-        .default("pending").notNull(),
-    dueDate: text("due_date").notNull(),
-    graceLastDate: text("grace_last_date"),
-    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-}, (table) => [
-    index("invoices_tenant_id_idx").on(table.tenantId),
-    index("invoices_billing_month_idx").on(table.billingMonth),
-    index("invoices_status_idx").on(table.status),
-]);
+// ─────────────────────────────────────────────────────────────
+// USERS (Tenants + Admin)
+// A single users table handles both roles.
+// Role "admin" has full access; role "tenant" sees only their own data.
+// ─────────────────────────────────────────────────────────────
+export const users = sqliteTable("users", {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    name: text("name").notNull(),
+    email: text("email").notNull().unique(),
+    phone: text("phone").notNull(),
+    passwordHash: text("password_hash"),   // NULLABLE (Google users have no password)
+    googleId: text("google_id").unique(),  // Google's unique user ID
+    role: text("role", { enum: ["admin", "tenant"] }).notNull().default("tenant"),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at").notNull(),
+});
 
-// ── Payments ───────────────────────────────────────
-export const payments = sqliteTable("payments", {
-    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    tenantId: text("tenant_id").references(() => tenantProfiles.id).notNull(),
-    invoiceId: text("invoice_id").references(() => invoices.id).notNull(),
-    amount: text("amount").notNull(),
-    paymentMethod: text("payment_method", { enum: ["upi", "card"] }),
-    razorpayPaymentId: text("razorpay_payment_id"),
-    paidAt: integer("paid_at", { mode: "timestamp" }).notNull(),
-    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-}, (table) => [
-    index("payments_tenant_id_idx").on(table.tenantId),
-    index("payments_invoice_id_idx").on(table.invoiceId),
-]);
+// ─────────────────────────────────────────────────────────────
+// BOOKINGS
+// A booking links a tenant to a specific bed.
+// One tenant = one active booking at a time.
+// When a tenant leaves, moveOutDate is set and bed becomes available.
+// ─────────────────────────────────────────────────────────────
+export const bookings = sqliteTable("bookings", {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    tenantId: integer("tenant_id").notNull().references(() => users.id),
+    bedId: integer("bed_id").notNull().references(() => beds.id),
+    status: text("status", {
+        enum: ["pending_deposit", "active", "ended"],
+    }).notNull().default("pending_deposit"),
+    monthlyRent: real("monthly_rent").notNull(),          // snapshot of rent at booking time
+    moveInDate: text("move_in_date").notNull(),
+    moveOutDate: text("move_out_date"),                   // null until tenant leaves
+    nextRentDueDate: text("next_rent_due_date").notNull(),
+    createdAt: text("created_at").notNull(),
+}, (table) => ([
+    index("idx_bookings_tenant_status").on(table.tenantId, table.status),
+]));
 
-// ── Payment Attempts ───────────────────────────────
-export const paymentAttempts = sqliteTable("payment_attempts", {
-    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    tenantId: text("tenant_id").references(() => tenantProfiles.id).notNull(),
-    invoiceId: text("invoice_id").references(() => invoices.id).notNull(),
-    amount: text("amount").notNull(),
-    status: text("status", { enum: ["pending", "success", "failed"] })
-        .default("pending").notNull(),
+// ─────────────────────────────────────────────────────────────
+// DEPOSITS
+// Each booking has one deposit record.
+// Deposit is paid upfront; refunded (minus deductions) when tenant leaves.
+// ─────────────────────────────────────────────────────────────
+export const deposits = sqliteTable("deposits", {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    bookingId: integer("booking_id").notNull().references(() => bookings.id).unique(),
+    tenantId: integer("tenant_id").notNull().references(() => users.id),
+    amount: real("amount").notNull(),
+    status: text("status", {
+        enum: ["held", "refunded", "partially_refunded"],
+    }).notNull().default("held"),
     razorpayOrderId: text("razorpay_order_id"),
     razorpayPaymentId: text("razorpay_payment_id"),
-    failureReason: text("failure_reason"),
-    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-}, (table) => [
-    index("payment_attempts_tenant_id_idx").on(table.tenantId),
-    index("payment_attempts_invoice_id_idx").on(table.invoiceId),
-    index("payment_attempts_status_idx").on(table.status),
-]);
+    paidAt: text("paid_at"),
+    refundedAt: text("refunded_at"),
+    refundAmount: real("refund_amount"),                  // actual amount returned
+    deductionAmount: real("deduction_amount"),            // deducted for damages
+    deductionReason: text("deduction_reason"),
+    createdAt: text("created_at").notNull(),
+});
 
-// ── Notification Logs ──────────────────────────────
-export const notificationLogs = sqliteTable("notification_logs", {
-    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    tenantId: text("tenant_id").references(() => tenantProfiles.id).notNull(),
-    invoiceId: text("invoice_id").references(() => invoices.id),
-    type: text("type", { enum: ["due_reminder", "overdue_reminder"] }).notNull(),
-    channel: text("channel"),
-    status: text("status"),
-    sentAt: integer("sent_at", { mode: "timestamp" }),
-    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-}, (table) => [
-    index("notification_logs_tenant_id_idx").on(table.tenantId),
-    index("notification_logs_invoice_id_idx").on(table.invoiceId),
-]);
+// ─────────────────────────────────────────────────────────────
+// PAYMENTS (Monthly Rent Payments)
+// Each row = one rent payment event.
+// type: "online" = paid via Razorpay | "manual" = admin recorded cash/UPI
+// ─────────────────────────────────────────────────────────────
+export const payments = sqliteTable("payments", {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    tenantId: integer("tenant_id").notNull().references(() => users.id),
+    bookingId: integer("booking_id").notNull().references(() => bookings.id),
+    amount: real("amount").notNull(),
+    type: text("type", { enum: ["online", "manual"] }).notNull(),
+    status: text("status", {
+        enum: ["pending", "completed", "failed"],
+    }).notNull().default("pending"),
+    // Razorpay fields (only filled for online payments)
+    razorpayOrderId: text("razorpay_order_id"),
+    razorpayPaymentId: text("razorpay_payment_id"),
+    razorpaySignature: text("razorpay_signature"),
+    // Rent period this payment covers (e.g. "2025-06")
+    rentMonth: text("rent_month").notNull(),              // format: YYYY-MM
+    lateFee: real("late_fee").notNull().default(0),
+    notes: text("notes"),                                 // admin notes for manual payments
+    paidAt: text("paid_at"),
+    createdAt: text("created_at").notNull(),
+}, (table) => ([
+    index("idx_payments_tenant_month").on(table.tenantId, table.rentMonth),
+]));
 
-// ── Relations (REQUIRED for db.query.*.findMany({ with: ... })) ──
+// ─────────────────────────────────────────────────────────────
+// COMPLAINTS
+// Tenants submit complaints/queries. Admin manages status.
+// ─────────────────────────────────────────────────────────────
+export const complaints = sqliteTable("complaints", {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    tenantId: integer("tenant_id").notNull().references(() => users.id),
+    subject: text("subject").notNull(),
+    message: text("message").notNull(),
+    status: text("status", {
+        enum: ["open", "in_progress", "resolved", "closed"],
+    }).notNull().default("open"),
+    adminReply: text("admin_reply"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+});
+
+// ─────────────────────────────────────────────────────────────
+// SETTINGS
+// Key-value store for admin-configurable values.
+// Stored in DB so admin can change them without redeploying code.
+//
+// Keys used:
+//   rent_due_start_day   → "1"    (1st of month)
+//   rent_due_end_day     → "5"    (5th of month)
+//   late_fee_amount      → "100"  (₹100)
+//   deposit_amount       → "5000" (default deposit)
+// ─────────────────────────────────────────────────────────────
+export const settings = sqliteTable("settings", {
+    key: text("key").primaryKey(),
+    value: text("value").notNull(),
+    updatedAt: text("updated_at").notNull(),
+});
+
+// ─────────────────────────────────────────────────────────────
+// RELATIONS
+// Drizzle relations let you write type-safe JOIN queries.
+// These don't create DB constraints — they're for the query builder.
+// ─────────────────────────────────────────────────────────────
+
+export const roomsRelations = relations(rooms, ({ many }) => ({
+    beds: many(beds),
+}));
+
+export const bedsRelations = relations(beds, ({ one, many }) => ({
+    room: one(rooms, { fields: [beds.roomId], references: [rooms.id] }),
+    bookings: many(bookings),
+}));
 
 export const usersRelations = relations(users, ({ many }) => ({
-    tenantProfiles: many(tenantProfiles),
+    bookings: many(bookings),
+    payments: many(payments),
+    complaints: many(complaints),
+    deposits: many(deposits),
 }));
 
-export const tenantProfilesRelations = relations(tenantProfiles, ({ one, many }) => ({
-    user: one(users, { fields: [tenantProfiles.userId], references: [users.id] }),
-    invoices: many(invoices),
+export const bookingsRelations = relations(bookings, ({ one, many }) => ({
+    tenant: one(users, { fields: [bookings.tenantId], references: [users.id] }),
+    bed: one(beds, { fields: [bookings.bedId], references: [beds.id] }),
     payments: many(payments),
-    paymentAttempts: many(paymentAttempts),
-    notificationLogs: many(notificationLogs),
+    deposit: one(deposits, { fields: [bookings.id], references: [deposits.bookingId] }),
 }));
 
-export const invoicesRelations = relations(invoices, ({ one, many }) => ({
-    tenantProfile: one(tenantProfiles, {
-        fields: [invoices.tenantId], references: [tenantProfiles.id]
-    }),
-    payments: many(payments),
-    paymentAttempts: many(paymentAttempts),
-    notificationLogs: many(notificationLogs),
+export const depositsRelations = relations(deposits, ({ one }) => ({
+    booking: one(bookings, { fields: [deposits.bookingId], references: [bookings.id] }),
+    tenant: one(users, { fields: [deposits.tenantId], references: [users.id] }),
 }));
 
 export const paymentsRelations = relations(payments, ({ one }) => ({
-    tenantProfile: one(tenantProfiles, {
-        fields: [payments.tenantId], references: [tenantProfiles.id]
-    }),
-    invoice: one(invoices, {
-        fields: [payments.invoiceId], references: [invoices.id]
-    }),
+    tenant: one(users, { fields: [payments.tenantId], references: [users.id] }),
+    booking: one(bookings, { fields: [payments.bookingId], references: [bookings.id] }),
 }));
 
-export const paymentAttemptsRelations = relations(paymentAttempts, ({ one }) => ({
-    tenantProfile: one(tenantProfiles, {
-        fields: [paymentAttempts.tenantId], references: [tenantProfiles.id]
-    }),
-    invoice: one(invoices, {
-        fields: [paymentAttempts.invoiceId], references: [invoices.id]
-    }),
+export const complaintsRelations = relations(complaints, ({ one }) => ({
+    tenant: one(users, { fields: [complaints.tenantId], references: [users.id] }),
 }));
 
-export const notificationLogsRelations = relations(notificationLogs, ({ one }) => ({
-    tenantProfile: one(tenantProfiles, {
-        fields: [notificationLogs.tenantId], references: [tenantProfiles.id]
-    }),
-    invoice: one(invoices, {
-        fields: [notificationLogs.invoiceId], references: [invoices.id]
-    }),
-}));
+// ─────────────────────────────────────────────────────────────
+// TYPE EXPORTS
+// Drizzle infers TypeScript types from the schema automatically.
+// Use these types throughout the app instead of writing them by hand.
+// ─────────────────────────────────────────────────────────────
+export type Room = typeof rooms.$inferSelect;
+export type NewRoom = typeof rooms.$inferInsert;
 
-// ── Type exports ───────────────────────────────────
+export type Bed = typeof beds.$inferSelect;
+export type NewBed = typeof beds.$inferInsert;
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
-export type TenantProfile = typeof tenantProfiles.$inferSelect;
-export type NewTenantProfile = typeof tenantProfiles.$inferInsert;
-export type Invoice = typeof invoices.$inferSelect;
-export type NewInvoice = typeof invoices.$inferInsert;
+
+export type Booking = typeof bookings.$inferSelect;
+export type NewBooking = typeof bookings.$inferInsert;
+
+export type Deposit = typeof deposits.$inferSelect;
+export type NewDeposit = typeof deposits.$inferInsert;
+
 export type Payment = typeof payments.$inferSelect;
 export type NewPayment = typeof payments.$inferInsert;
-export type PaymentAttempt = typeof paymentAttempts.$inferSelect;
-export type NewPaymentAttempt = typeof paymentAttempts.$inferInsert;
-export type NotificationLog = typeof notificationLogs.$inferSelect;
-export type NewNotificationLog = typeof notificationLogs.$inferInsert;
+
+export type Complaint = typeof complaints.$inferSelect;
+export type NewComplaint = typeof complaints.$inferInsert;
+
+export type Setting = typeof settings.$inferSelect;

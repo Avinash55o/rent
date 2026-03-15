@@ -1,0 +1,24 @@
+name = "pg-backend"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ─── D1 Database ─────────────────────────────────────────────
+[[d1_databases]]
+binding = "DB"
+database_name = "rent"
+database_id = "44fac067-9fad-4b77-a66a-c640dd7b7146"
+
+# ─── Environment Variables ────────────────────────────────────
+# Non-secret config (safe to keep here)
+[vars]
+ENVIRONMENT = "development"
+GOOGLE_REDIRECT_URI = "http://localhost:3000/auth/google/callback"
+
+# ─── Secrets (NEVER commit these — set via CLI) ──────────────
+# Run each of these before first deploy:
+#   wrangler secret put JWT_SECRET
+#   wrangler secret put RAZORPAY_KEY_ID
+#   wrangler secret put RAZORPAY_KEY_SECRET
+#   wrangler secret put GOOGLE_CLIENT_ID
+#   wrangler secret put GOOGLE_CLIENT_SECRET

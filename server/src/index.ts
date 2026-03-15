@@ -1,32 +1,98 @@
+/**
+ * This is the root of the application. It:
+ *   1. Creates the main Hono app
+ *   2. Registers global middleware (CORS, error handler)
+ *   3. Mounts all route sub-apps under their prefixes
+ *   4. Exports the fetch handler for Cloudflare Workers
+ *
+ * HOW CLOUDFLARE WORKERS WORK:
+ * A Worker exports a `fetch` handler function. Cloudflare calls this function
+ * for every incoming HTTP request. Hono handles the routing internally and
+ * returns a Response object, which Cloudflare sends back to the client.
+ *
+ * ROUTE MAP:
+ *   /api/auth/*        → auth.ts     (signup, login, me)
+ *   /api/rooms/*       → rooms.ts    (room/bed availability + admin CRUD)
+ *   /api/bookings/*    → bookings.ts (book a bed, deposit flow, admin management)
+ *   /api/payments/*    → payments.ts (rent payment, history, receipts)
+ *   /api/complaints/*  → complaints.ts (submit + manage complaints)
+ *   /api/admin/*       → admin.ts    (dashboard, tenant mgmt, settings, export)
+ */
+
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { dbMiddleware } from "./middlewares/auth.middleware";
-import { auth } from "./routes/auth";
-import { tenantsRouter } from "./routes/tenants";
-import { invoiceRouter } from "./routes/invoices";
-import { paymentRouter } from "./routes/payments";
-import { webhookRouter } from "./webhooks/razorpay";
-import { handleScheduled } from "./workers/reminders";
-import type { HonoEnv } from "./types";
+import { logger } from "hono/logger";
+import type { Env } from "./types/env";
+import { err } from "./types/api";
 
-const app = new Hono<HonoEnv>();
+// Route modules
+import authRoutes from "./routes/auth";
+import roomsRoutes from "./routes/rooms";
+import bookingsRoutes from "./routes/bookings";
+import paymentsRoutes from "./routes/payments";
+import complaintsRoutes from "./routes/complaints";
+import adminRoutes from "./routes/admin";
 
-// Global middleware
-app.use("*", cors());
-app.use("*", dbMiddleware);
+// Create the main Hono app with the Env type (gives access to c.env everywhere)
+const app = new Hono<{ Bindings: Env }>();
 
-// Health check
-app.get("/", (c) => c.json({ status: "ok", service: "rent-server" }));
+// ─── Global Middleware ────────────────────────────────────────
 
-// Routes
-app.route("/api/auth", auth);
-app.route("/api/tenants", tenantsRouter);
-app.route("/api/invoices", invoiceRouter);
-app.route("/api/payments", paymentRouter);
-app.route("/api/webhooks", webhookRouter);
+// CORS: Allow requests from your frontend domain
+// In production, change origin to your actual frontend URL
+app.use(
+  "*",
+  cors({
+    origin: ["http://localhost:3000", "https://your-frontend-domain.com"],
+    allowHeaders: ["Content-Type", "Authorization"],
+    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    credentials: true,
+  })
+);
 
-// Export for Cloudflare Workers
-export default {
-    fetch: app.fetch,
-    scheduled: handleScheduled,
-};
+// Logger: Logs request method, path, and status to console (visible in wrangler dev)
+app.use("*", logger());
+
+// ─── Health Check ─────────────────────────────────────────────
+app.get("/", (c) => {
+  return c.json({
+    name: "Rent Payment API",
+    version: "1.0.0",
+    status: "running",
+    environment: c.env.ENVIRONMENT,
+  });
+});
+
+app.get("/health", (c) => c.json({ status: "ok" }));
+
+// ─── Route Mounting ───────────────────────────────────────────
+app.route("/api/auth", authRoutes);
+app.route("/api/rooms", roomsRoutes);
+app.route("/api/bookings", bookingsRoutes);
+app.route("/api/payments", paymentsRoutes);
+app.route("/api/complaints", complaintsRoutes);
+app.route("/api/admin", adminRoutes);
+
+// ─── Global Error Handler ─────────────────────────────────────
+// Catches any unhandled errors and returns a consistent JSON error response
+// This prevents the Worker from crashing and leaking stack traces to clients
+app.onError((error, c) => {
+  console.error("Unhandled error:", error);
+
+  // Don't leak internal error details in production
+  const message =
+    c.env.ENVIRONMENT === "development"
+      ? error.message
+      : "Internal server error";
+
+  return c.json(err(message), 500);
+});
+
+// ─── 404 Handler ─────────────────────────────────────────────
+app.notFound((c) => {
+  return c.json(err(`Route not found: ${c.req.method} ${c.req.path}`), 404);
+});
+
+// ─── Export ───────────────────────────────────────────────────
+// Cloudflare Workers require a default export with a `fetch` method
+export default app;
