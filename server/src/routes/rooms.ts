@@ -13,7 +13,7 @@ import type { JwtPayload } from "../types/api";
 import { ok, err } from "../types/api";
 import { createDb } from "../db/client";
 import { rooms, beds } from "../db/schema";
-import { createRoomSchema, updateBedSchema } from "../validators";
+import { createRoomSchema, updateBedSchema, updateRoomSchema, addBedToRoomSchema } from "../validators";
 import { nowISO } from "../utils";
 import { requireAdmin } from "../middleware/auth";
 
@@ -95,6 +95,100 @@ roomsRoute.post("/", requireAdmin(), zValidator("json", createRoomSchema), async
     return c.json(ok({ ...room, beds: createdBeds }), 201);
 });
 
+// ─── PUT /api/rooms/:id — ADMIN ONLY ─────────────────────────
+// Update room name and description
+roomsRoute.put(
+    "/:id",
+    requireAdmin(),
+    zValidator("json", updateRoomSchema),
+    async (c) => {
+        const roomId = parseInt(c.req.param("id"), 10);
+        if (isNaN(roomId)) return c.json(err("Invalid room ID"), 400);
+
+        const body = c.req.valid("json");
+        const db = createDb(c.env.DB);
+
+        const updated = await db
+            .update(rooms)
+            .set(body)
+            .where(eq(rooms.id, roomId))
+            .returning()
+            .get();
+
+        if (!updated) return c.json(err("Room not found"), 404);
+
+        return c.json(ok(updated));
+    }
+);
+
+// ─── DELETE /api/rooms/:id — ADMIN ONLY ─────────────────────────
+// Delete a room (only if all beds are available/empty)
+roomsRoute.delete("/:id", requireAdmin(), async (c) => {
+    const roomId = parseInt(c.req.param("id"), 10);
+    if (isNaN(roomId)) return c.json(err("Invalid room ID"), 400);
+
+    const db = createDb(c.env.DB);
+
+    // Check if room exists
+    const room = await db.select().from(rooms).where(eq(rooms.id, roomId)).get();
+    if (!room) return c.json(err("Room not found"), 404);
+
+    // Check if any beds are occupied or reserved
+    const roomBeds = await db.select().from(beds).where(eq(beds.roomId, roomId)).all();
+    const occupiedBeds = roomBeds.filter((b) => b.status !== "available");
+
+    if (occupiedBeds.length > 0) {
+        return c.json(
+            err(`Cannot delete room with ${occupiedBeds.length} occupied/reserved bed(s). Free up all beds first.`),
+            409
+        );
+    }
+
+    // Delete all beds in the room
+    await db.delete(beds).where(eq(beds.roomId, roomId));
+
+    // Delete the room
+    await db.delete(rooms).where(eq(rooms.id, roomId));
+
+    return c.json(ok({ message: "Room and all its beds deleted successfully" }));
+});
+
+// ─── POST /api/rooms/:id/beds — ADMIN ONLY ─────────────────────
+// Add a new bed to an existing room
+roomsRoute.post(
+    "/:id/beds",
+    requireAdmin(),
+    zValidator("json", addBedToRoomSchema),
+    async (c) => {
+        const roomId = parseInt(c.req.param("id"), 10);
+        if (isNaN(roomId)) return c.json(err("Invalid room ID"), 400);
+
+        const body = c.req.valid("json");
+        const db = createDb(c.env.DB);
+
+        // Check if room exists
+        const room = await db.select().from(rooms).where(eq(rooms.id, roomId)).get();
+        if (!room) return c.json(err("Room not found"), 404);
+
+        const now = nowISO();
+        const newBed = await db
+            .insert(beds)
+            .values({
+                roomId,
+                name: body.name,
+                monthlyRent: body.monthlyRent,
+                status: "available",
+                createdAt: now,
+            })
+            .returning()
+            .get();
+
+        if (!newBed) return c.json(err("Failed to create bed"), 500);
+
+        return c.json(ok(newBed), 201);
+    }
+);
+
 // ─── PUT /api/rooms/:id/beds/:bedId — ADMIN ONLY ─────────────
 roomsRoute.put(
     "/:id/beds/:bedId",
@@ -119,5 +213,26 @@ roomsRoute.put(
         return c.json(ok(updated));
     }
 );
+
+// ─── DELETE /api/rooms/:id/beds/:bedId — ADMIN ONLY ───────────
+// Delete a specific bed (only if available)
+roomsRoute.delete("/:id/beds/:bedId", requireAdmin(), async (c) => {
+    const bedId = parseInt(c.req.param("bedId"), 10);
+    if (isNaN(bedId)) return c.json(err("Invalid bed ID"), 400);
+
+    const db = createDb(c.env.DB);
+
+    // Check if bed exists and is available
+    const bed = await db.select().from(beds).where(eq(beds.id, bedId)).get();
+    if (!bed) return c.json(err("Bed not found"), 404);
+
+    if (bed.status !== "available") {
+        return c.json(err("Cannot delete bed that is occupied or reserved"), 409);
+    }
+
+    await db.delete(beds).where(eq(beds.id, bedId));
+
+    return c.json(ok({ message: "Bed deleted successfully" }));
+});
 
 export default roomsRoute;

@@ -19,6 +19,10 @@ function GoogleCallbackInner() {
     processed.current = true;
 
     const code = searchParams.get("code");
+    const state = localStorage.getItem("google_oauth_state");
+
+    // Clear the stored state
+    localStorage.removeItem("google_oauth_state");
 
     if (!code) {
       toast.error("Google login failed — no code received");
@@ -26,8 +30,14 @@ function GoogleCallbackInner() {
       return;
     }
 
+    if (!state) {
+      toast.error("Google login failed — session expired. Please try again.");
+      router.replace("/login");
+      return;
+    }
+
     api
-      .post("/api/auth/google/callback", { code })
+      .post("/api/auth/google/callback", { code, state })
       .then((res) => {
         const { token, user } = res.data.data;
         login(token, user);

@@ -12,13 +12,13 @@
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { eq, and, desc, count } from "drizzle-orm";
+import { eq, and, desc, count, like, or, sql } from "drizzle-orm";
 import type { Env } from "../types/env";
 import type { JwtPayload } from "../types/api";
 import { ok, err } from "../types/api";
 import { createDb } from "../db/client";
 import { users, bookings, beds, rooms, payments, deposits, complaints } from "../db/schema";
-import { updateRentSchema, updateSettingsSchema, adminCreateTenantSchema } from "../validators";
+import { updateRentSchema, updateSettingsSchema, adminCreateTenantSchema, paginationSchema, type PaginatedResponse } from "../validators";
 import { requireAdmin } from "../middleware/auth";
 import { getAllSettings, updateSettings } from "../services/settings.service";
 import { getTenantPayments } from "../services/payment.service";
@@ -72,10 +72,30 @@ adminRoute.get("/dashboard", async (c) => {
 });
 
 // ─── GET /api/admin/tenants ───────────────────────────────────
-adminRoute.get("/tenants", async (c) => {
+// Supports pagination: ?page=1&limit=20&search=john
+adminRoute.get("/tenants", zValidator("query", paginationSchema), async (c) => {
+    const { page, limit, search } = c.req.valid("query");
     const db = createDb(c.env.DB);
+    const offset = (page - 1) * limit;
 
-    // Get all tenants joined with their active booking + bed + room info
+    // Build search condition if search term provided
+    const searchCondition = search
+        ? or(
+            like(users.name, `%${search}%`),
+            like(users.email, `%${search}%`),
+            like(users.phone, `%${search}%`)
+        )
+        : undefined;
+
+    // Get total count for pagination
+    const totalResult = await db
+        .select({ count: count() })
+        .from(users)
+        .where(searchCondition ? and(eq(users.role, "tenant"), searchCondition) : eq(users.role, "tenant"))
+        .get();
+    const total = totalResult?.count ?? 0;
+
+    // Get paginated tenants with their active booking + bed + room info
     const tenantList = await db
         .select({
             id: users.id,
@@ -93,7 +113,7 @@ adminRoute.get("/tenants", async (c) => {
             roomName: rooms.name,
         })
         .from(users)
-        .where(eq(users.role, "tenant"))
+        .where(searchCondition ? and(eq(users.role, "tenant"), searchCondition) : eq(users.role, "tenant"))
         .leftJoin(
             bookings,
             and(eq(bookings.tenantId, users.id), eq(bookings.status, "active"))
@@ -101,28 +121,85 @@ adminRoute.get("/tenants", async (c) => {
         .leftJoin(beds, eq(beds.id, bookings.bedId))
         .leftJoin(rooms, eq(rooms.id, beds.roomId))
         .orderBy(desc(users.createdAt))
+        .limit(limit)
+        .offset(offset)
         .all();
 
-    return c.json(ok(tenantList));
+    const totalPages = Math.ceil(total / limit);
+
+    const response: PaginatedResponse<typeof tenantList[0]> = {
+        data: tenantList,
+        pagination: {
+            page,
+            limit,
+            total,
+            totalPages,
+            hasNext: page < totalPages,
+            hasPrev: page > 1,
+        },
+    };
+
+    return c.json(ok(response));
 });
 
 // ─── GET /api/admin/tenants/:id ───────────────────────────────
 // Full profile: user + booking + deposit + payment history + complaints
+// Optimized: Uses JOINs to reduce queries from 7+ to 3
 adminRoute.get("/tenants/:id", async (c) => {
     const tenantId = parseInt(c.req.param("id"), 10);
     if (isNaN(tenantId)) return c.json(err("Invalid tenant ID"), 400);
 
     const db = createDb(c.env.DB);
 
-    const tenant = await db.select().from(users).where(eq(users.id, tenantId)).get();
-    if (!tenant || tenant.role !== "tenant") return c.json(err("Tenant not found"), 404);
+    // Single query with JOINs for tenant + active booking + bed + room + deposit
+    const tenantWithBooking = await db
+        .select({
+            // User fields
+            id: users.id,
+            name: users.name,
+            email: users.email,
+            phone: users.phone,
+            role: users.role,
+            isActive: users.isActive,
+            googleId: users.googleId,
+            createdAt: users.createdAt,
+            // Booking fields
+            bookingId: bookings.id,
+            bookingStatus: bookings.status,
+            monthlyRent: bookings.monthlyRent,
+            moveInDate: bookings.moveInDate,
+            moveOutDate: bookings.moveOutDate,
+            nextRentDueDate: bookings.nextRentDueDate,
+            bookingCreatedAt: bookings.createdAt,
+            // Bed fields
+            bedId: beds.id,
+            bedName: beds.name,
+            bedStatus: beds.status,
+            // Room fields
+            roomId: rooms.id,
+            roomName: rooms.name,
+            roomDescription: rooms.description,
+            // Deposit fields
+            depositId: deposits.id,
+            depositAmount: deposits.amount,
+            depositStatus: deposits.status,
+            depositPaidAt: deposits.paidAt,
+            depositRefundAmount: deposits.refundAmount,
+            depositDeductionAmount: deposits.deductionAmount,
+            depositDeductionReason: deposits.deductionReason,
+        })
+        .from(users)
+        .where(and(eq(users.id, tenantId), eq(users.role, "tenant")))
+        .leftJoin(bookings, and(eq(bookings.tenantId, users.id), eq(bookings.status, "active")))
+        .leftJoin(beds, eq(beds.id, bookings.bedId))
+        .leftJoin(rooms, eq(rooms.id, beds.roomId))
+        .leftJoin(deposits, eq(deposits.bookingId, bookings.id))
+        .get();
 
-    const [booking, paymentHistory, tenantComplaints] = await Promise.all([
-        db
-            .select()
-            .from(bookings)
-            .where(and(eq(bookings.tenantId, tenantId), eq(bookings.status, "active")))
-            .get(),
+    if (!tenantWithBooking) return c.json(err("Tenant not found"), 404);
+
+    // Only 2 more queries needed: payments and complaints (in parallel)
+    const [paymentHistory, tenantComplaints] = await Promise.all([
         getTenantPayments(db, tenantId),
         db
             .select()
@@ -132,22 +209,56 @@ adminRoute.get("/tenants/:id", async (c) => {
             .all(),
     ]);
 
-    let depositInfo = null;
-    let bedInfo = null;
+    // Restructure the flat result into nested objects
+    const tenant = {
+        id: tenantWithBooking.id,
+        name: tenantWithBooking.name,
+        email: tenantWithBooking.email,
+        phone: tenantWithBooking.phone,
+        role: tenantWithBooking.role,
+        isActive: tenantWithBooking.isActive,
+        googleId: tenantWithBooking.googleId,
+        createdAt: tenantWithBooking.createdAt,
+    };
 
-    if (booking) {
-        [depositInfo, bedInfo] = await Promise.all([
-            db.select().from(deposits).where(eq(deposits.bookingId, booking.id)).get(),
-            db.select().from(beds).where(eq(beds.id, booking.bedId)).get(),
-        ]);
-    }
+    const booking = tenantWithBooking.bookingId ? {
+        id: tenantWithBooking.bookingId,
+        tenantId,
+        bedId: tenantWithBooking.bedId,
+        status: tenantWithBooking.bookingStatus,
+        monthlyRent: tenantWithBooking.monthlyRent,
+        moveInDate: tenantWithBooking.moveInDate,
+        moveOutDate: tenantWithBooking.moveOutDate,
+        nextRentDueDate: tenantWithBooking.nextRentDueDate,
+        createdAt: tenantWithBooking.bookingCreatedAt,
+    } : null;
+
+    const bed = tenantWithBooking.bedId ? {
+        id: tenantWithBooking.bedId,
+        roomId: tenantWithBooking.roomId,
+        name: tenantWithBooking.bedName,
+        status: tenantWithBooking.bedStatus,
+        roomName: tenantWithBooking.roomName,
+    } : null;
+
+    const deposit = tenantWithBooking.depositId ? {
+        id: tenantWithBooking.depositId,
+        bookingId: tenantWithBooking.bookingId,
+        tenantId,
+        amount: tenantWithBooking.depositAmount,
+        status: tenantWithBooking.depositStatus,
+        paidAt: tenantWithBooking.depositPaidAt,
+        refundAmount: tenantWithBooking.depositRefundAmount,
+        deductionAmount: tenantWithBooking.depositDeductionAmount,
+        deductionReason: tenantWithBooking.depositDeductionReason,
+    } : null;
 
     return c.json(
         ok({
-            tenant: omit(tenant, ["passwordHash"]),
+            tenant,
             booking,
-            bed: bedInfo,
-            deposit: depositInfo,
+            bed,
+            deposit,
             payments: paymentHistory,
             complaints: tenantComplaints,
         })
@@ -248,6 +359,62 @@ adminRoute.put("/tenants/:id/deactivate", async (c) => {
     }
 
     return c.json(ok({ message: "Tenant account deactivated, booking ended, bed freed" }));
+});
+
+// ─── DELETE /api/admin/tenants/:id ─────────────────────────────
+// Permanently delete a tenant and all their associated data
+adminRoute.delete("/tenants/:id", async (c) => {
+    const tenantId = parseInt(c.req.param("id"), 10);
+    if (isNaN(tenantId)) return c.json(err("Invalid tenant ID"), 400);
+
+    const db = createDb(c.env.DB);
+
+    // Check if tenant exists
+    const tenant = await db
+        .select()
+        .from(users)
+        .where(and(eq(users.id, tenantId), eq(users.role, "tenant")))
+        .get();
+
+    if (!tenant) return c.json(err("Tenant not found"), 404);
+
+    // Get all bookings for this tenant (active, pending_deposit, or ended)
+    const tenantBookings = await db
+        .select()
+        .from(bookings)
+        .where(eq(bookings.tenantId, tenantId))
+        .all();
+
+    // Free up any beds that are reserved or occupied by this tenant
+    for (const booking of tenantBookings) {
+        if (booking.status === "active" || booking.status === "pending_deposit") {
+            // Free up the bed
+            await db
+                .update(beds)
+                .set({ status: "available" })
+                .where(eq(beds.id, booking.bedId));
+        }
+    }
+
+    // Delete in order to respect foreign key constraints:
+    // 1. Delete complaints
+    await db.delete(complaints).where(eq(complaints.tenantId, tenantId));
+
+    // 2. Delete payments
+    await db.delete(payments).where(eq(payments.tenantId, tenantId));
+
+    // 3. Delete deposits for each booking
+    for (const booking of tenantBookings) {
+        await db.delete(deposits).where(eq(deposits.bookingId, booking.id));
+    }
+
+    // 4. Delete bookings
+    await db.delete(bookings).where(eq(bookings.tenantId, tenantId));
+
+    // 5. Finally, delete the user
+    await db.delete(users).where(eq(users.id, tenantId));
+
+    return c.json(ok({ message: "Tenant and all associated data permanently deleted, beds freed" }));
 });
 
 // ─── GET /api/admin/settings ──────────────────────────────────

@@ -8,13 +8,13 @@
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, count, like, or } from "drizzle-orm";
 import type { Env } from "../types/env";
 import type { JwtPayload } from "../types/api";
 import { ok, err } from "../types/api";
 import { createDb } from "../db/client";
 import { complaints, users } from "../db/schema";
-import { createComplaintSchema, updateComplaintSchema } from "../validators";
+import { createComplaintSchema, updateComplaintSchema, paginationSchema, type PaginatedResponse } from "../validators";
 import { requireAuth, requireAdmin } from "../middleware/auth";
 import { nowISO } from "../utils";
 
@@ -61,8 +61,27 @@ complaintsRoute.get("/my", requireAuth(), async (c) => {
 });
 
 // ─── GET /api/complaints — ADMIN ─────────────────────────────
-complaintsRoute.get("/", requireAdmin(), async (c) => {
+// Supports pagination: ?page=1&limit=20&search=subject
+complaintsRoute.get("/", requireAdmin(), zValidator("query", paginationSchema), async (c) => {
+    const { page, limit, search } = c.req.valid("query");
     const db = createDb(c.env.DB);
+    const offset = (page - 1) * limit;
+
+    // Build search condition if search term provided
+    const searchCondition = search
+        ? or(
+            like(complaints.subject, `%${search}%`),
+            like(complaints.message, `%${search}%`)
+        )
+        : undefined;
+
+    // Get total count
+    const totalResult = await db
+        .select({ count: count() })
+        .from(complaints)
+        .where(searchCondition)
+        .get();
+    const total = totalResult?.count ?? 0;
 
     // Join with users to get tenant name
     const result = await db
@@ -79,11 +98,28 @@ complaintsRoute.get("/", requireAdmin(), async (c) => {
             tenantEmail: users.email,
         })
         .from(complaints)
+        .where(searchCondition)
         .leftJoin(users, eq(complaints.tenantId, users.id))
         .orderBy(desc(complaints.createdAt))
+        .limit(limit)
+        .offset(offset)
         .all();
 
-    return c.json(ok(result));
+    const totalPages = Math.ceil(total / limit);
+
+    const response: PaginatedResponse<typeof result[0]> = {
+        data: result,
+        pagination: {
+            page,
+            limit,
+            total,
+            totalPages,
+            hasNext: page < totalPages,
+            hasPrev: page > 1,
+        },
+    };
+
+    return c.json(ok(response));
 });
 
 // ─── GET /api/complaints/:id — ADMIN ─────────────────────────

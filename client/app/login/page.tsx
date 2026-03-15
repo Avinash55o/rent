@@ -39,7 +39,9 @@ export default function LoginPage() {
     setGoogleLoading(true);
     try {
       const res = await api.get("/api/auth/google");
-      const { url } = res.data.data;
+      const { url, state } = res.data.data;
+      // Store state for CSRF verification on callback
+      localStorage.setItem("google_oauth_state", state);
       window.location.href = url;
     } catch {
       toast.error("Failed to initiate Google login");
