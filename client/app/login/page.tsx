@@ -39,7 +39,23 @@ export default function LoginPage() {
     setGoogleLoading(true);
     try {
       const res = await api.get("/api/auth/google");
-      const { url } = res.data.data;
+      const { url, state } = res.data.data;
+
+      // Validate OAuth URL before redirect (prevent open redirect attacks)
+      const allowedHosts = ["accounts.google.com"];
+      try {
+        const parsedUrl = new URL(url);
+        if (!allowedHosts.includes(parsedUrl.hostname)) {
+          throw new Error("Invalid OAuth URL");
+        }
+      } catch {
+        toast.error("Invalid login URL received");
+        setGoogleLoading(false);
+        return;
+      }
+
+      // Store state for CSRF verification on callback
+      localStorage.setItem("google_oauth_state", state);
       window.location.href = url;
     } catch {
       toast.error("Failed to initiate Google login");

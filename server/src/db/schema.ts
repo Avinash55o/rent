@@ -47,13 +47,23 @@ export const users = sqliteTable("users", {
     role: text("role", { enum: ["admin", "tenant"] }).notNull().default("tenant"),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
     createdAt: text("created_at").notNull(),
-});
+}, (table) => ([
+    index("idx_users_role").on(table.role),
+    index("idx_users_is_active").on(table.isActive),
+]));
 
 // ─────────────────────────────────────────────────────────────
 // BOOKINGS
 // A booking links a tenant to a specific bed.
 // One tenant = one active booking at a time.
 // When a tenant leaves, moveOutDate is set and bed becomes available.
+//
+// CONSTRAINT ENFORCEMENT:
+// - One booking per bed: Enforced via optimistic locking on beds.status
+//   (see bookings.ts - UPDATE WHERE status='available' is atomic)
+// - One active booking per tenant: Enforced at application level
+//   (check before booking creation). SQLite doesn't support partial
+//   unique indexes, so DB-level enforcement isn't possible.
 // ─────────────────────────────────────────────────────────────
 export const bookings = sqliteTable("bookings", {
     id: integer("id").primaryKey({ autoIncrement: true }),
@@ -92,7 +102,10 @@ export const deposits = sqliteTable("deposits", {
     deductionAmount: real("deduction_amount"),            // deducted for damages
     deductionReason: text("deduction_reason"),
     createdAt: text("created_at").notNull(),
-});
+}, (table) => ([
+    index("idx_deposits_tenant_id").on(table.tenantId),
+    index("idx_deposits_status").on(table.status),
+]));
 
 // ─────────────────────────────────────────────────────────────
 // PAYMENTS (Monthly Rent Payments)
@@ -120,6 +133,9 @@ export const payments = sqliteTable("payments", {
     createdAt: text("created_at").notNull(),
 }, (table) => ([
     index("idx_payments_tenant_month").on(table.tenantId, table.rentMonth),
+    index("idx_payments_tenant_status").on(table.tenantId, table.status),
+    index("idx_payments_status").on(table.status),
+    index("idx_payments_booking_id").on(table.bookingId),
 ]));
 
 // ─────────────────────────────────────────────────────────────
@@ -137,7 +153,11 @@ export const complaints = sqliteTable("complaints", {
     adminReply: text("admin_reply"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
-});
+}, (table) => ([
+    index("idx_complaints_tenant_id").on(table.tenantId),
+    index("idx_complaints_status").on(table.status),
+    index("idx_complaints_tenant_status").on(table.tenantId, table.status),
+]));
 
 // ─────────────────────────────────────────────────────────────
 // SETTINGS

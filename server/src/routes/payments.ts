@@ -10,7 +10,7 @@
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, count, like, or } from "drizzle-orm";
 import type { Env } from "../types/env";
 import type { JwtPayload } from "../types/api";
 import { ok, err } from "../types/api";
@@ -20,6 +20,8 @@ import {
     initiatePaymentSchema,
     verifyPaymentSchema,
     manualPaymentSchema,
+    paginationSchema,
+    type PaginatedResponse,
 } from "../validators";
 import { requireAuth, requireAdmin } from "../middleware/auth";
 import {
@@ -27,6 +29,7 @@ import {
     verifyAndCompletePayment,
     recordManualPayment,
     getTenantPayments,
+    handleWebhookPayment,
 } from "../services/payment.service";
 
 type Variables = { user: JwtPayload };
@@ -182,16 +185,57 @@ paymentsRoute.post(
 );
 
 // ─── GET /api/payments — ADMIN ────────────────────────────────
-paymentsRoute.get("/", requireAdmin(), async (c) => {
+// Supports pagination: ?page=1&limit=20&search=john
+paymentsRoute.get("/", requireAdmin(), zValidator("query", paginationSchema), async (c) => {
+    const { page, limit, search } = c.req.valid("query");
     const db = createDb(c.env.DB);
+    const offset = (page - 1) * limit;
 
-    const allPayments = await db
-        .select()
+    // Get total count
+    const totalResult = await db.select({ count: count() }).from(payments).get();
+    const total = totalResult?.count ?? 0;
+
+    // Get paginated payments with tenant info
+    const paymentList = await db
+        .select({
+            id: payments.id,
+            tenantId: payments.tenantId,
+            tenantName: users.name,
+            tenantEmail: users.email,
+            bookingId: payments.bookingId,
+            amount: payments.amount,
+            lateFee: payments.lateFee,
+            rentMonth: payments.rentMonth,
+            type: payments.type,
+            status: payments.status,
+            razorpayOrderId: payments.razorpayOrderId,
+            razorpayPaymentId: payments.razorpayPaymentId,
+            notes: payments.notes,
+            paidAt: payments.paidAt,
+            createdAt: payments.createdAt,
+        })
         .from(payments)
+        .leftJoin(users, eq(payments.tenantId, users.id))
         .orderBy(desc(payments.createdAt))
+        .limit(limit)
+        .offset(offset)
         .all();
 
-    return c.json(ok(allPayments));
+    const totalPages = Math.ceil(total / limit);
+
+    const response: PaginatedResponse<typeof paymentList[0]> = {
+        data: paymentList,
+        pagination: {
+            page,
+            limit,
+            total,
+            totalPages,
+            hasNext: page < totalPages,
+            hasPrev: page > 1,
+        },
+    };
+
+    return c.json(ok(response));
 });
 
 // ─── GET /api/payments/tenant/:tenantId — ADMIN ───────────────
@@ -203,6 +247,37 @@ paymentsRoute.get("/tenant/:tenantId", requireAdmin(), async (c) => {
     const history = await getTenantPayments(db, tenantId);
 
     return c.json(ok(history));
+});
+
+// ─── POST /api/payments/webhook — RAZORPAY WEBHOOK ────────────
+// Razorpay sends payment status updates to this endpoint
+// This is a backup verification in case client-side verification fails
+paymentsRoute.post("/webhook", async (c) => {
+    const signature = c.req.header("X-Razorpay-Signature");
+    if (!signature) {
+        return c.json(err("Missing signature"), 400);
+    }
+
+    try {
+        const rawBody = await c.req.text();
+        const db = createDb(c.env.DB);
+
+        const result = await handleWebhookPayment(
+            db,
+            rawBody,
+            signature,
+            c.env.RAZORPAY_KEY_SECRET
+        );
+
+        if (result.success) {
+            return c.json(ok({ message: "Webhook processed successfully" }));
+        } else {
+            return c.json(err(result.error || "Webhook processing failed"), 400);
+        }
+    } catch (e) {
+        console.error("Webhook error:", e);
+        return c.json(err("Webhook processing error"), 500);
+    }
 });
 
 export default paymentsRoute;

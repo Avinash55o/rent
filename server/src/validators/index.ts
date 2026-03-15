@@ -1,5 +1,27 @@
 import z from "zod";
 
+// ─── Pagination ──────────────────────────────────────────────
+
+export const paginationSchema = z.object({
+    page: z.coerce.number().int().min(1).default(1),
+    limit: z.coerce.number().int().min(1).max(100).default(20),
+    search: z.string().optional(),
+});
+
+export type PaginationInput = z.infer<typeof paginationSchema>;
+
+export interface PaginatedResponse<T> {
+    data: T[];
+    pagination: {
+        page: number;
+        limit: number;
+        total: number;
+        totalPages: number;
+        hasNext: boolean;
+        hasPrev: boolean;
+    };
+}
+
 export const signupSchema = z.object({
     name: z.string().min(2, "Name must be at least 2 characters"),
     email: z.email("Invalid email address"),
@@ -37,6 +59,16 @@ export const updateBedSchema = z.object({
     name: z.string().min(1).optional(),
     monthlyRent: z.number().positive().optional(),
     status: z.enum(["available", "reserved", "occupied"]).optional(),
+});
+
+export const updateRoomSchema = z.object({
+    name: z.string().min(1, "Room name is required").optional(),
+    description: z.string().optional(),
+});
+
+export const addBedToRoomSchema = z.object({
+    name: z.string().min(1, "Bed name is required"),
+    monthlyRent: z.number().positive("Rent must be positive"),
 });
 
 // ─── Bookings ─────────────────────────────────────────────────

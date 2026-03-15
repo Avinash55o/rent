@@ -283,3 +283,150 @@ function getNextMonth(rentMonth: string): string {
     const m = String(date.getMonth() + 1).padStart(2, "0");
     return `${y}-${m}`;
 }
+
+// ─── Webhook Handler ─────────────────────────────────────────
+
+interface WebhookResult {
+    success: boolean;
+    error?: string;
+}
+
+/**
+ * Handle Razorpay webhook events.
+ * This is a backup verification in case client-side verification fails.
+ * Razorpay sends events like "payment.captured" to this endpoint.
+ */
+export async function handleWebhookPayment(
+    db: DrizzleDb,
+    rawBody: string,
+    signature: string,
+    webhookSecret: string
+): Promise<WebhookResult> {
+    // Verify webhook signature using HMAC-SHA256
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+        "raw",
+        encoder.encode(webhookSecret),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]
+    );
+
+    const expectedSigBuffer = await crypto.subtle.sign(
+        "HMAC",
+        key,
+        encoder.encode(rawBody)
+    );
+
+    const expectedSig = Array.from(new Uint8Array(expectedSigBuffer))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+
+    // Constant-time comparison to prevent timing attacks
+    if (signature.length !== expectedSig.length) {
+        return { success: false, error: "Invalid signature" };
+    }
+
+    let mismatch = 0;
+    for (let i = 0; i < signature.length; i++) {
+        mismatch |= signature.charCodeAt(i) ^ expectedSig.charCodeAt(i);
+    }
+
+    if (mismatch !== 0) {
+        return { success: false, error: "Invalid signature" };
+    }
+
+    // Parse the webhook payload
+    let event: {
+        event: string;
+        payload: {
+            payment?: {
+                entity: {
+                    id: string;
+                    order_id: string;
+                    status: string;
+                    amount: number;
+                };
+            };
+        };
+    };
+
+    try {
+        event = JSON.parse(rawBody);
+    } catch {
+        return { success: false, error: "Invalid JSON payload" };
+    }
+
+    // Handle payment.captured event
+    if (event.event === "payment.captured") {
+        const paymentEntity = event.payload.payment?.entity;
+        if (!paymentEntity) {
+            return { success: false, error: "Missing payment entity" };
+        }
+
+        const { id: razorpayPaymentId, order_id: razorpayOrderId } = paymentEntity;
+
+        // Find the pending payment by order ID
+        const payment = await db
+            .select()
+            .from(payments)
+            .where(
+                and(
+                    eq(payments.razorpayOrderId, razorpayOrderId),
+                    eq(payments.status, "pending")
+                )
+            )
+            .get();
+
+        if (!payment) {
+            // Payment already processed or doesn't exist - that's okay
+            return { success: true };
+        }
+
+        // Mark as completed
+        const now = nowISO();
+        await db
+            .update(payments)
+            .set({
+                status: "completed",
+                razorpayPaymentId,
+                paidAt: now,
+            })
+            .where(eq(payments.id, payment.id));
+
+        // Update next rent due date on booking
+        const nextMonth = getNextMonth(payment.rentMonth);
+        await db
+            .update(bookings)
+            .set({ nextRentDueDate: `${nextMonth}-01` })
+            .where(eq(bookings.id, payment.bookingId));
+
+        return { success: true };
+    }
+
+    // Handle payment.failed event
+    if (event.event === "payment.failed") {
+        const paymentEntity = event.payload.payment?.entity;
+        if (!paymentEntity) {
+            return { success: false, error: "Missing payment entity" };
+        }
+
+        const { order_id: razorpayOrderId } = paymentEntity;
+
+        // Mark payment as failed
+        await db
+            .update(payments)
+            .set({ status: "failed" })
+            .where(
+                and(
+                    eq(payments.razorpayOrderId, razorpayOrderId),
+                    eq(payments.status, "pending")
+                )
+            );
+
+        return { success: true };
+    }
+
+    // Unknown event type - acknowledge receipt
+    return { success: true };
+}

@@ -7,6 +7,7 @@ import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { Modal } from "@/components/Modal";
 import toast from "react-hot-toast";
 import { CreditCard, Plus, Download } from "lucide-react";
+import { TableSkeleton } from "@/components/Skeleton";
 
 interface Payment {
   id: number;
@@ -87,7 +88,18 @@ export default function AdminPaymentsPage() {
     } catch { toast.error(`Failed to export ${type}`); }
   };
 
-  if (loading) return <LoadingSpinner text="Loading payments..." />;
+  if (loading) {
+    return (
+      <div>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <CreditCard className="h-6 w-6" /> Payments
+          </h1>
+        </div>
+        <TableSkeleton rows={5} />
+      </div>
+    );
+  }
 
   return (
     <div>

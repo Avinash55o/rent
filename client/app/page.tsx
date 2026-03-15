@@ -10,6 +10,7 @@ import toast from "react-hot-toast";
 import Link from "next/link";
 import { Bed, CheckCircle2, XCircle, Clock, Home } from "lucide-react";
 import { openRazorpayCheckout } from "@/lib/razorpay";
+import { RoomGridSkeleton } from "@/components/Skeleton";
 
 interface BedData {
   id: number;
@@ -118,7 +119,7 @@ export default function HomePage() {
         <section id="rooms" className="py-12 border-t border-base-200">
           <h2 className="text-3xl font-bold tracking-tight mb-8">Available Rooms</h2>
           {loading ? (
-            <LoadingSpinner text="Loading rooms..." />
+            <RoomGridSkeleton />
           ) : rooms.length === 0 ? (
             <div className="text-center py-16">
               <Bed className="h-12 w-12 mx-auto text-base-content/30 mb-4" />
