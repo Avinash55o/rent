@@ -2,13 +2,11 @@
 
 import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
-import { useTheme } from "@/context/ThemeContext";
-import { LogOut, Menu, Home, LayoutDashboard, Shield, Sun, Moon } from "lucide-react";
+import { LogOut, Menu, Home, LayoutDashboard, Shield } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 export function Navbar() {
   const { user, isAuthenticated, isAdmin, logout } = useAuth();
-  const { isDark, toggleTheme } = useTheme();
   const router = useRouter();
 
   const handleLogout = () => {
@@ -52,15 +50,8 @@ export function Navbar() {
         </ul>
       </div>
 
-      {/* Theme toggle + Auth buttons */}
+      {/* Auth buttons */}
       <div className="navbar-end gap-2">
-        <button
-          onClick={toggleTheme}
-          className="btn btn-ghost btn-circle btn-sm"
-          aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-        >
-          {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-        </button>
         {isAuthenticated ? (
           <div className="flex items-center gap-3">
             <span className="text-sm hidden sm:inline">

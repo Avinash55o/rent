@@ -126,7 +126,7 @@ export default function HomePage() {
               <p className="text-base-content/60">No rooms available yet. Check back soon!</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-start">
               {rooms.map((room) => (
                 <div key={room.id} className="card bg-base-100 shadow-md border border-base-200 hover:shadow-lg transition-shadow">
                   <div className="card-body">
