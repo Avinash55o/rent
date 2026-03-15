@@ -66,8 +66,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const storedUser = localStorage.getItem("user");
 
     if (storedToken && storedUser) {
+      // Safely parse stored user data
+      let parsedUser: User | null = null;
+      try {
+        parsedUser = JSON.parse(storedUser);
+      } catch {
+        // Corrupted localStorage data - clear it
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        setLoading(false);
+        return;
+      }
+
       setToken(storedToken);
-      setUser(JSON.parse(storedUser));
+      setUser(parsedUser);
+
       // Validate token in background
       api
         .get("/api/auth/me", {
