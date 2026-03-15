@@ -20,6 +20,7 @@ import { createDb } from "../db/client";
 import { users, bookings, beds, rooms, payments, deposits, complaints } from "../db/schema";
 import { updateRentSchema, updateSettingsSchema, adminCreateTenantSchema, paginationSchema, type PaginatedResponse } from "../validators";
 import { requireAdmin } from "../middleware/auth";
+import { adminDeleteRateLimit } from "../middleware/rateLimit";
 import { getAllSettings, updateSettings } from "../services/settings.service";
 import { getTenantPayments } from "../services/payment.service";
 import { omit, hashPassword, nowISO, escapeCSV } from "../utils";
@@ -199,13 +200,15 @@ adminRoute.get("/tenants/:id", async (c) => {
     if (!tenantWithBooking) return c.json(err("Tenant not found"), 404);
 
     // Only 2 more queries needed: payments and complaints (in parallel)
+    // Limited to most recent 50 entries each to prevent memory issues
     const [paymentHistory, tenantComplaints] = await Promise.all([
-        getTenantPayments(db, tenantId),
+        getTenantPayments(db, tenantId, 50),
         db
             .select()
             .from(complaints)
             .where(eq(complaints.tenantId, tenantId))
             .orderBy(desc(complaints.createdAt))
+            .limit(50)
             .all(),
     ]);
 
@@ -363,7 +366,8 @@ adminRoute.put("/tenants/:id/deactivate", async (c) => {
 
 // ─── DELETE /api/admin/tenants/:id ─────────────────────────────
 // Permanently delete a tenant and all their associated data
-adminRoute.delete("/tenants/:id", async (c) => {
+// Rate limited to prevent accidental mass deletion
+adminRoute.delete("/tenants/:id", adminDeleteRateLimit(), async (c) => {
     const tenantId = parseInt(c.req.param("id"), 10);
     if (isNaN(tenantId)) return c.json(err("Invalid tenant ID"), 400);
 

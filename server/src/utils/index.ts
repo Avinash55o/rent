@@ -100,11 +100,14 @@ export function toDateString(date: Date): string {
  * Calculate the next rent due date.
  * Rent is due on the 1st of the next month.
  * e.g. move-in on 2025-06-15 → next due date is 2025-07-01
+ *
+ * Uses UTC methods to avoid timezone issues.
  */
 export function getNextRentDueDate(fromDate: Date): string {
     const next = new Date(fromDate);
-    next.setMonth(next.getMonth() + 1);
-    next.setDate(1);
+    // Use UTC methods to avoid timezone-related off-by-one errors
+    next.setUTCMonth(next.getUTCMonth() + 1);
+    next.setUTCDate(1);
     return toDateString(next);
 }
 

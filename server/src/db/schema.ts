@@ -36,6 +36,10 @@ export const beds = sqliteTable("beds", {
 // USERS (Tenants + Admin)
 // A single users table handles both roles.
 // Role "admin" has full access; role "tenant" sees only their own data.
+//
+// CASCADE DELETE: Not enforced at DB level (would require migration).
+// Manual cascade is implemented in admin.ts DELETE /tenants/:id
+// which deletes: complaints, payments, deposits, bookings, then user.
 // ─────────────────────────────────────────────────────────────
 export const users = sqliteTable("users", {
     id: integer("id").primaryKey({ autoIncrement: true }),

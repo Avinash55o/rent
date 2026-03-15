@@ -39,19 +39,31 @@ export default function PaymentsPage() {
   const [receiptOpen, setReceiptOpen] = useState(false);
 
   useEffect(() => {
-    fetchPayments();
-  }, []);
+    let cancelled = false;
 
-  const fetchPayments = async () => {
-    try {
-      const res = await api.get("/api/payments/my");
-      setPayments(res.data?.data || []);
-    } catch {
-      toast.error("Failed to load payments");
-    } finally {
-      setLoading(false);
-    }
-  };
+    const fetchPayments = async () => {
+      try {
+        const res = await api.get("/api/payments/my");
+        if (!cancelled) {
+          setPayments(res.data?.data || []);
+        }
+      } catch {
+        if (!cancelled) {
+          toast.error("Failed to load payments");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchPayments();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const viewReceipt = async (paymentId: number) => {
     try {

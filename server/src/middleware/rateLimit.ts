@@ -166,3 +166,22 @@ export function getRateLimitKey(action: string, ip: string, email?: string): str
     }
     return `${action}:${ip}`;
 }
+
+/**
+ * Pre-configured rate limiter for admin delete operations.
+ * Limits: 10 deletes per hour per admin.
+ * This prevents accidental or malicious mass deletion.
+ */
+export function adminDeleteRateLimit(): MiddlewareHandler<{ Bindings: Env }> {
+    return rateLimit({
+        keyGenerator: (c) => {
+            const ip = c.req.header("CF-Connecting-IP") ||
+                       c.req.header("X-Forwarded-For")?.split(",")[0] ||
+                       "unknown";
+            return `admin-delete:${ip}`;
+        },
+        maxAttempts: 10,
+        windowMs: 60 * 60 * 1000, // 1 hour
+        message: "Too many delete operations. Please try again later.",
+    });
+}

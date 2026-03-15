@@ -255,12 +255,14 @@ export async function recordManualPayment(
 
 /**
  * Get payment history for a tenant.
+ * @param limit - Maximum number of payments to return (default: no limit)
  */
 export async function getTenantPayments(
     db: DrizzleDb,
-    tenantId: number
+    tenantId: number,
+    limit?: number
 ): Promise<Payment[]> {
-    return db
+    let query = db
         .select()
         .from(payments)
         .where(
@@ -269,8 +271,13 @@ export async function getTenantPayments(
                 eq(payments.status, "completed")
             )
         )
-        .orderBy(desc(payments.paidAt))
-        .all();
+        .orderBy(desc(payments.paidAt));
+
+    if (limit) {
+        query = query.limit(limit) as typeof query;
+    }
+
+    return query.all();
 }
 
 // ─── Helpers ──────────────────────────────────────────────────
