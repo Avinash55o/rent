@@ -189,6 +189,87 @@ export async function verifyRazorpaySignature(
     return constantTimeEqual(expectedSignature, signature);
 }
 
+// ─── OAuth State Token (CSRF Protection) ─────────────────────
+
+/**
+ * Create a signed OAuth state token to prevent CSRF attacks.
+ * The state contains a timestamp and random value, signed with HMAC.
+ * Format: "timestamp:random:signature"
+ *
+ * The state expires after 10 minutes to prevent replay attacks.
+ */
+export async function createOAuthState(secret: string): Promise<string> {
+    const timestamp = Date.now();
+    const random = crypto.randomUUID();
+    const payload = `${timestamp}:${random}`;
+
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+        "raw",
+        encoder.encode(secret),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]
+    );
+
+    const signatureBuffer = await crypto.subtle.sign(
+        "HMAC",
+        key,
+        encoder.encode(payload)
+    );
+
+    const signature = bufToHex(new Uint8Array(signatureBuffer));
+    return `${payload}:${signature}`;
+}
+
+/**
+ * Verify an OAuth state token.
+ * Returns true if:
+ * - The signature is valid
+ * - The token is not expired (10 minute window)
+ */
+export async function verifyOAuthState(
+    state: string,
+    secret: string,
+    maxAgeMs: number = 10 * 60 * 1000 // 10 minutes
+): Promise<boolean> {
+    try {
+        const parts = state.split(":");
+        if (parts.length !== 3) return false;
+
+        const [timestampStr, random, signature] = parts as [string, string, string];
+        const timestamp = parseInt(timestampStr, 10);
+
+        if (isNaN(timestamp)) return false;
+
+        // Check expiry
+        const now = Date.now();
+        if (now - timestamp > maxAgeMs) return false;
+
+        // Verify signature
+        const payload = `${timestamp}:${random}`;
+        const encoder = new TextEncoder();
+        const key = await crypto.subtle.importKey(
+            "raw",
+            encoder.encode(secret),
+            { name: "HMAC", hash: "SHA-256" },
+            false,
+            ["sign"]
+        );
+
+        const expectedSigBuffer = await crypto.subtle.sign(
+            "HMAC",
+            key,
+            encoder.encode(payload)
+        );
+
+        const expectedSignature = bufToHex(new Uint8Array(expectedSigBuffer));
+        return constantTimeEqual(signature, expectedSignature);
+    } catch {
+        return false;
+    }
+}
+
 // ─── Misc ─────────────────────────────────────────────────────
 
 /** Generate a simple alphanumeric ID (for receipt numbers, etc.) */
@@ -217,4 +298,32 @@ export function omit<T extends object, K extends keyof T>(
     const result = { ...obj };
     for (const key of keys) delete result[key];
     return result as Omit<T, K>;
+}
+
+/**
+ * Escape a value for CSV output.
+ * - Converts to string
+ * - Escapes double quotes by doubling them ("" for each ")
+ * - Wraps in quotes if the value contains comma, newline, or quote
+ * - Also handles CSV injection by prefixing dangerous characters
+ */
+export function escapeCSV(value: unknown): string {
+    const str = String(value ?? "");
+
+    // CSV injection prevention: prefix cells starting with dangerous characters
+    // These could be interpreted as formulas in Excel/Google Sheets
+    if (/^[=+\-@\t\r]/.test(str)) {
+        return `"'${str.replace(/"/g, '""')}"`;
+    }
+
+    // Escape quotes by doubling them
+    const escaped = str.replace(/"/g, '""');
+
+    // Wrap in quotes if contains special characters
+    if (/[",\n\r]/.test(str)) {
+        return `"${escaped}"`;
+    }
+
+    // Always wrap in quotes for consistency and safety
+    return `"${escaped}"`;
 }

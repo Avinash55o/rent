@@ -110,7 +110,7 @@ export const updateRentSchema = z.object({
 
 export const googleCallbackSchema = z.object({
     code: z.string().min(1, "Authorization code is required"),
-    state: z.string().optional(),  // CSRF state parameter
+    state: z.string().min(1, "State parameter is required for CSRF protection"),
 });
 
 // ─── Admin: create tenant manually ────────────────────────────
