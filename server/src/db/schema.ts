@@ -57,6 +57,13 @@ export const users = sqliteTable("users", {
 // A booking links a tenant to a specific bed.
 // One tenant = one active booking at a time.
 // When a tenant leaves, moveOutDate is set and bed becomes available.
+//
+// CONSTRAINT ENFORCEMENT:
+// - One booking per bed: Enforced via optimistic locking on beds.status
+//   (see bookings.ts - UPDATE WHERE status='available' is atomic)
+// - One active booking per tenant: Enforced at application level
+//   (check before booking creation). SQLite doesn't support partial
+//   unique indexes, so DB-level enforcement isn't possible.
 // ─────────────────────────────────────────────────────────────
 export const bookings = sqliteTable("bookings", {
     id: integer("id").primaryKey({ autoIncrement: true }),

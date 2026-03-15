@@ -61,39 +61,67 @@ bookingsRoute.post(
             return c.json(err("You already have an active or pending booking"), 409);
         }
 
-        // Check bed is available
+        // Get bed info first
         const bed = await db.select().from(beds).where(eq(beds.id, bedId)).get();
         if (!bed) return c.json(err("Bed not found"), 404);
-        if (bed.status !== "available") {
-            return c.json(err(`Bed is currently ${bed.status}`), 409);
+
+        // OPTIMISTIC LOCKING: Atomically reserve the bed
+        // This prevents race conditions where two users try to book the same bed
+        const reserveResult = await db
+            .update(beds)
+            .set({ status: "reserved" })
+            .where(and(eq(beds.id, bedId), eq(beds.status, "available")))
+            .returning({ id: beds.id });
+
+        if (reserveResult.length === 0) {
+            // Bed was not available (another request got it first, or status changed)
+            const currentBed = await db.select({ status: beds.status }).from(beds).where(eq(beds.id, bedId)).get();
+            return c.json(err(`Bed is currently ${currentBed?.status || "unavailable"}`), 409);
         }
+
+        // Bed is now reserved for this user - proceed with booking
+        // If anything fails from here, we must release the bed
 
         // Get tenant info
         const tenant = await db.select().from(users).where(eq(users.id, tenantId)).get();
-        if (!tenant) return c.json(err("Tenant not found"), 404);
+        if (!tenant) {
+            // Rollback: release the bed
+            await db.update(beds).set({ status: "available" }).where(eq(beds.id, bedId));
+            return c.json(err("Tenant not found"), 404);
+        }
 
         const now = nowISO();
         const today = new Date();
 
         // Create booking record (status = "pending_deposit" — becomes "active" after deposit verified)
-        const booking = await db
-            .insert(bookings)
-            .values({
-                tenantId,
-                bedId,
-                status: "pending_deposit",
-                monthlyRent: bed.monthlyRent,
-                moveInDate: toDateString(today),
-                nextRentDueDate: getNextRentDueDate(today),
-                createdAt: now,
-            })
-            .returning()
-            .get();
+        let booking;
+        try {
+            booking = await db
+                .insert(bookings)
+                .values({
+                    tenantId,
+                    bedId,
+                    status: "pending_deposit",
+                    monthlyRent: bed.monthlyRent,
+                    moveInDate: toDateString(today),
+                    nextRentDueDate: getNextRentDueDate(today),
+                    createdAt: now,
+                })
+                .returning()
+                .get();
+        } catch (bookingError) {
+            // Rollback: release the bed
+            await db.update(beds).set({ status: "available" }).where(eq(beds.id, bedId));
+            console.error("Failed to create booking:", bookingError);
+            return c.json(err("Failed to create booking. Please try again."), 500);
+        }
 
-        if (!booking) return c.json(err("Failed to create booking"), 500);
+        if (!booking) {
+            await db.update(beds).set({ status: "available" }).where(eq(beds.id, bedId));
+            return c.json(err("Failed to create booking"), 500);
+        }
 
         // Create Razorpay order for deposit
-        // If this fails, we need to rollback the booking
         const receipt = generateReceiptNumber();
         let order;
         try {
@@ -107,14 +135,14 @@ bookingsRoute.post(
                 }
             );
         } catch (razorpayError) {
-            // Rollback: delete the booking we just created
+            // Rollback: delete booking and release bed
             await db.delete(bookings).where(eq(bookings.id, booking.id));
+            await db.update(beds).set({ status: "available" }).where(eq(beds.id, bedId));
             console.error("Razorpay order creation failed:", razorpayError);
             return c.json(err("Payment gateway error. Please try again."), 500);
         }
 
-        // Create deposit record and mark bed as reserved
-        // These operations should be atomic
+        // Create deposit record
         try {
             await db.insert(deposits).values({
                 bookingId: booking.id,
@@ -124,13 +152,11 @@ bookingsRoute.post(
                 razorpayOrderId: order.id,
                 createdAt: now,
             });
-
-            // Mark bed as "reserved" while waiting for deposit payment
-            await db.update(beds).set({ status: "reserved" }).where(eq(beds.id, bedId));
         } catch (dbError) {
-            // Rollback: delete booking (Razorpay order will expire on its own)
+            // Rollback: delete booking and release bed
             await db.delete(bookings).where(eq(bookings.id, booking.id));
-            console.error("Database error during booking finalization:", dbError);
+            await db.update(beds).set({ status: "available" }).where(eq(beds.id, bedId));
+            console.error("Database error during deposit creation:", dbError);
             return c.json(err("Failed to finalize booking. Please try again."), 500);
         }
 
