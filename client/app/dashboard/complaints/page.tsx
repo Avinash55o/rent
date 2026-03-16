@@ -74,7 +74,7 @@ export default function ComplaintsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <MessageSquare className="h-6 w-6" /> My Complaints
         </h1>
@@ -96,7 +96,7 @@ export default function ComplaintsPage() {
               className="card bg-base-100 shadow-sm border border-base-200"
             >
               <div className="card-body p-4">
-                <div className="flex items-start justify-between">
+                <div className="flex flex-col sm:flex-row items-start justify-between gap-2">
                   <div>
                     <h3 className="font-bold flex items-center gap-2">
                       {getStatusIcon(c.status)} {c.subject}
@@ -106,13 +106,12 @@ export default function ComplaintsPage() {
                     </p>
                   </div>
                   <span
-                    className={`badge badge-sm ${
-                      c.status === "resolved"
+                    className={`badge badge-sm ${c.status === "resolved"
                         ? "badge-success"
                         : c.status === "in_progress"
-                        ? "badge-info"
-                        : "badge-warning"
-                    }`}
+                          ? "badge-info"
+                          : "badge-warning"
+                      }`}
                   >
                     {c.status.replace("_", " ")}
                   </span>
