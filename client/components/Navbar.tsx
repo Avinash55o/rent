@@ -5,7 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { LogOut, Menu, Home, LayoutDashboard, Shield } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-export function Navbar() {
+export function Navbar({ hideMobileMenu = false }: { hideMobileMenu?: boolean }) {
   const { user, isAuthenticated, isAdmin, logout } = useAuth();
   const router = useRouter();
 
@@ -18,20 +18,22 @@ export function Navbar() {
     <div className="navbar bg-base-100 shadow-sm border-b border-base-200 px-4">
       {/* Mobile menu */}
       <div className="navbar-start">
-        <div className="dropdown">
-          <div tabIndex={0} role="button" className="btn btn-ghost lg:hidden">
-            <Menu className="h-5 w-5" />
+        {!hideMobileMenu && (
+          <div className="dropdown">
+            <div tabIndex={0} role="button" className="btn btn-ghost lg:hidden">
+              <Menu className="h-5 w-5" />
+            </div>
+            <ul tabIndex={0} className="menu menu-sm dropdown-content bg-base-100 rounded-box z-50 mt-3 w-52 p-2 shadow">
+              <li><Link href="/"><Home className="h-4 w-4" /> Rooms</Link></li>
+              {isAuthenticated && !isAdmin && (
+                <li><Link href="/dashboard"><LayoutDashboard className="h-4 w-4" /> Dashboard</Link></li>
+              )}
+              {isAdmin && (
+                <li><Link href="/admin"><Shield className="h-4 w-4" /> Admin</Link></li>
+              )}
+            </ul>
           </div>
-          <ul tabIndex={0} className="menu menu-sm dropdown-content bg-base-100 rounded-box z-50 mt-3 w-52 p-2 shadow">
-            <li><Link href="/"><Home className="h-4 w-4" /> Rooms</Link></li>
-            {isAuthenticated && !isAdmin && (
-              <li><Link href="/dashboard"><LayoutDashboard className="h-4 w-4" /> Dashboard</Link></li>
-            )}
-            {isAdmin && (
-              <li><Link href="/admin"><Shield className="h-4 w-4" /> Admin</Link></li>
-            )}
-          </ul>
-        </div>
+        )}
         <Link href="/" className="btn btn-ghost text-xl font-bold">
           RentEase
         </Link>
