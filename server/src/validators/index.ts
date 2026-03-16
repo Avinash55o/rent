@@ -94,6 +94,13 @@ export const initiatePaymentSchema = z.object({
         .regex(/^\d{4}-\d{2}$/, "rentMonth must be YYYY-MM format"),
 });
 
+// Razorpay calls back after payment (for deposits) — tenant sends us these 3 fields to verify
+export const verifyDepositSchema = z.object({
+    razorpayOrderId: z.string().min(1),
+    razorpayPaymentId: z.string().min(1),
+    razorpaySignature: z.string().min(1),
+});
+
 // Razorpay calls back after payment — tenant sends us these 3 fields to verify
 export const verifyPaymentSchema = z.object({
     razorpayOrderId: z.string().min(1),
@@ -162,6 +169,7 @@ export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 export type CreateRoomInput = z.infer<typeof createRoomSchema>;
 export type CreateBookingInput = z.infer<typeof createBookingSchema>;
 export type InitiatePaymentInput = z.infer<typeof initiatePaymentSchema>;
+export type VerifyDepositInput = z.infer<typeof verifyDepositSchema>;
 export type VerifyPaymentInput = z.infer<typeof verifyPaymentSchema>;
 export type ManualPaymentInput = z.infer<typeof manualPaymentSchema>;
 export type CreateComplaintInput = z.infer<typeof createComplaintSchema>;

@@ -27,7 +27,7 @@ import { bookings, beds, deposits, users } from "../db/schema";
 import {
     createBookingSchema,
     endBookingSchema,
-    verifyPaymentSchema,
+    verifyDepositSchema,
 } from "../validators";
 import { createRazorpayOrder } from "../services/razorpay.service";
 import { verifyRazorpaySignature, nowISO, getNextRentDueDate, toDateString, generateReceiptNumber } from "../utils";
@@ -178,7 +178,7 @@ bookingsRoute.post(
 bookingsRoute.post(
     "/deposit/verify",
     requireAuth(),
-    zValidator("json", verifyPaymentSchema),
+    zValidator("json", verifyDepositSchema),
     async (c) => {
         const { sub: tenantId } = c.get("user");
         const { razorpayOrderId, razorpayPaymentId, razorpaySignature } =
