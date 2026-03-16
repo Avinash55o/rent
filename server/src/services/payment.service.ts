@@ -68,18 +68,23 @@ export async function initiateRentPayment(
 
     if (existing) throw new Error(`Rent for ${rentMonth} already paid`);
 
-    // Calculate late fee
-    // Late fee applies ONLY if:
-    //   1. The rentMonth being paid for is the current month (or earlier)
-    //   2. Today's day is past the rent due end day
+    // Calculate late fee based on move-in date and grace period
     const lateFeeRaw = await getSetting(db, "late_fee_amount");
-    const rentDueEndDay = parseInt(await getSetting(db, "rent_due_end_day"), 10);
-    const dateNow = new Date();
-    const currentMonth = `${dateNow.getUTCFullYear()}-${String(dateNow.getUTCMonth() + 1).padStart(2, "0")}`;
-    const today = dateNow.getUTCDate();
+    const gracePeriodDays = parseInt(await getSetting(db, "rent_due_end_day"), 10);
 
-    // Paying for current or past month AND past the due date
-    const isLate = rentMonth <= currentMonth && today > rentDueEndDay;
+    // Determine the exact due date for this rent month
+    const moveInDateObj = new Date(booking.moveInDate);
+    const moveInDay = moveInDateObj.getUTCDate();
+    const [rentYear, rentMonthNum] = rentMonth.split("-").map(Number);
+
+    // The rent due date is `gracePeriodDays` after the `moveInDay` of the `rentMonth`
+    const rentDueDate = new Date(Date.UTC(rentYear, rentMonthNum - 1, moveInDay + gracePeriodDays));
+
+    const dateNow = new Date();
+    const todayUTC = new Date(Date.UTC(dateNow.getUTCFullYear(), dateNow.getUTCMonth(), dateNow.getUTCDate()));
+
+    // Late fee applies if today is strictly past the calculated due date
+    const isLate = todayUTC > rentDueDate;
     const lateFee = isLate ? parseFloat(lateFeeRaw) : 0;
 
     // Check if this is the first rent payment for this booking
@@ -99,11 +104,11 @@ export async function initiateRentPayment(
         // First payment: calculate prorated rent based on moveInDate
         const moveInDate = new Date(booking.moveInDate);
         const rentMonthDate = new Date(`${rentMonth}-01`);
-        
+
         // Ensure the payment is for the moveInDate's month
-        if (moveInDate.getFullYear() === rentMonthDate.getFullYear() && 
+        if (moveInDate.getFullYear() === rentMonthDate.getFullYear() &&
             moveInDate.getMonth() === rentMonthDate.getMonth()) {
-            
+
             const daysInMonth = new Date(moveInDate.getFullYear(), moveInDate.getMonth() + 1, 0).getDate();
             const daysRemaining = daysInMonth - moveInDate.getDate() + 1; // inclusive of move-in day
             rentToPay = Math.round((booking.monthlyRent / daysInMonth) * daysRemaining);
@@ -455,7 +460,7 @@ export async function handleWebhookPayment(
                 .update(bookings)
                 .set({ nextRentDueDate: `${nextMonth}-01`, status: "active" })
                 .where(eq(bookings.id, payment.bookingId));
-            
+
             await db
                 .update(beds)
                 .set({ status: "occupied" })
