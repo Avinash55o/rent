@@ -75,7 +75,8 @@ export const addBedToRoomSchema = z.object({
 
 export const createBookingSchema = z.object({
     bedId: z.number().int().positive("Bed ID must be a positive integer"),
-    depositAmount: z.number().positive("Deposit amount must be positive"),
+    depositAmount: z.number().positive().optional(),
+    moveInDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
 });
 
 export const endBookingSchema = z.object({

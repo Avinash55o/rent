@@ -34,7 +34,7 @@ export default function AdminComplaintsPage() {
   const fetchComplaints = async () => {
     try {
       const res = await api.get("/api/complaints");
-      setComplaints(res.data?.data || []);
+      setComplaints(res.data?.data?.data || []);
     } catch { toast.error("Failed to load complaints"); }
     finally { setLoading(false); }
   };

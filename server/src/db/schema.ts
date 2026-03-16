@@ -74,7 +74,7 @@ export const bookings = sqliteTable("bookings", {
     tenantId: integer("tenant_id").notNull().references(() => users.id),
     bedId: integer("bed_id").notNull().references(() => beds.id),
     status: text("status", {
-        enum: ["pending_deposit", "active", "ended"],
+        enum: ["pending_deposit", "deposit_paid", "active", "ended"],
     }).notNull().default("pending_deposit"),
     monthlyRent: real("monthly_rent").notNull(),          // snapshot of rent at booking time
     moveInDate: text("move_in_date").notNull(),

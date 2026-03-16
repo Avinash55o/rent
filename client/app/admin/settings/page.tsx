@@ -74,11 +74,11 @@ export default function AdminSettingsPage() {
             </div>
             <div className="form-control">
               <label className="label"><span className="label-text">Late Fee Amount (₹)</span></label>
-              <input type="number" className="input input-bordered w-full" value={form.late_fee_amount} onChange={(e) => setForm((f) => ({ ...f, late_fee_amount: Number(e.target.value) }))} min={0} />
+              <input type="text" inputMode="numeric" pattern="[0-9]*" className="input input-bordered w-full" value={form.late_fee_amount} onChange={(e) => setForm((f) => ({ ...f, late_fee_amount: Number(e.target.value) || 0 }))} />
             </div>
             <div className="form-control">
               <label className="label"><span className="label-text">Default Deposit Amount (₹)</span></label>
-              <input type="number" className="input input-bordered w-full" value={form.deposit_amount} onChange={(e) => setForm((f) => ({ ...f, deposit_amount: Number(e.target.value) }))} min={0} />
+              <input type="text" inputMode="numeric" pattern="[0-9]*" className="input input-bordered w-full" value={form.deposit_amount} onChange={(e) => setForm((f) => ({ ...f, deposit_amount: Number(e.target.value) || 0 }))} />
               <label className="label"><span className="label-text-alt">Amount charged as security deposit when booking</span></label>
             </div>
             <button type="submit" className={`btn btn-primary ${saving ? "btn-disabled" : ""}`} disabled={saving}>

@@ -1,6 +1,6 @@
 import { eq, and, desc, or } from "drizzle-orm";
 import type { DrizzleDb } from "../db/client";
-import { payments, bookings, users } from "../db/schema";
+import { payments, bookings, users, beds } from "../db/schema";
 import { nowISO, generateReceiptNumber, verifyRazorpaySignature } from "../utils";
 import { getSetting } from "./settings.service";
 import { createRazorpayOrder } from "./razorpay.service";
@@ -36,7 +36,10 @@ export async function initiateRentPayment(
     const booking = await db
         .select()
         .from(bookings)
-        .where(and(eq(bookings.tenantId, tenantId), eq(bookings.status, "active")))
+        .where(and(
+            eq(bookings.tenantId, tenantId),
+            or(eq(bookings.status, "active"), eq(bookings.status, "deposit_paid"))
+        ))
         .get();
 
     if (!booking) throw new Error("No active booking found for this tenant");
@@ -79,7 +82,35 @@ export async function initiateRentPayment(
     const isLate = rentMonth <= currentMonth && today > rentDueEndDay;
     const lateFee = isLate ? parseFloat(lateFeeRaw) : 0;
 
-    const totalAmount = booking.monthlyRent + lateFee;
+    // Check if this is the first rent payment for this booking
+    const previousPayments = await db
+        .select({ id: payments.id })
+        .from(payments)
+        .where(
+            and(
+                eq(payments.bookingId, booking.id),
+                eq(payments.status, "completed")
+            )
+        )
+        .get();
+
+    let rentToPay = booking.monthlyRent;
+    if (!previousPayments) {
+        // First payment: calculate prorated rent based on moveInDate
+        const moveInDate = new Date(booking.moveInDate);
+        const rentMonthDate = new Date(`${rentMonth}-01`);
+        
+        // Ensure the payment is for the moveInDate's month
+        if (moveInDate.getFullYear() === rentMonthDate.getFullYear() && 
+            moveInDate.getMonth() === rentMonthDate.getMonth()) {
+            
+            const daysInMonth = new Date(moveInDate.getFullYear(), moveInDate.getMonth() + 1, 0).getDate();
+            const daysRemaining = daysInMonth - moveInDate.getDate() + 1; // inclusive of move-in day
+            rentToPay = Math.round((booking.monthlyRent / daysInMonth) * daysRemaining);
+        }
+    }
+
+    const totalAmount = rentToPay + lateFee;
 
     // Create Razorpay order
     const receiptNumber = generateReceiptNumber();
@@ -181,10 +212,17 @@ export async function verifyAndCompletePayment(
 
     // Update next rent due date on booking
     const nextMonth = getNextMonth(payment.rentMonth);
-    await db
-        .update(bookings)
-        .set({ nextRentDueDate: `${nextMonth}-01` })
-        .where(eq(bookings.id, payment.bookingId));
+    const paymentBooking = await db.select().from(bookings).where(eq(bookings.id, payment.bookingId)).get();
+    if (paymentBooking) {
+        await db
+            .update(bookings)
+            .set({ nextRentDueDate: `${nextMonth}-01`, status: "active" })
+            .where(eq(bookings.id, payment.bookingId));
+        await db
+            .update(beds)
+            .set({ status: "occupied" })
+            .where(eq(beds.id, paymentBooking.bedId));
+    }
 
     return updated;
 }
@@ -203,7 +241,10 @@ export async function recordManualPayment(
     const booking = await db
         .select()
         .from(bookings)
-        .where(and(eq(bookings.tenantId, tenantId), eq(bookings.status, "active")))
+        .where(and(
+            eq(bookings.tenantId, tenantId),
+            or(eq(bookings.status, "active"), eq(bookings.status, "deposit_paid"))
+        ))
         .get();
 
     if (!booking) throw new Error("No active booking found for this tenant");
@@ -247,8 +288,13 @@ export async function recordManualPayment(
     const nextMonth = getNextMonth(rentMonth);
     await db
         .update(bookings)
-        .set({ nextRentDueDate: `${nextMonth}-01` })
+        .set({ nextRentDueDate: `${nextMonth}-01`, status: "active" })
         .where(eq(bookings.id, booking.id));
+
+    await db
+        .update(beds)
+        .set({ status: "occupied" })
+        .where(eq(beds.id, booking.bedId));
 
     return result;
 }
@@ -403,10 +449,18 @@ export async function handleWebhookPayment(
 
         // Update next rent due date on booking
         const nextMonth = getNextMonth(payment.rentMonth);
-        await db
-            .update(bookings)
-            .set({ nextRentDueDate: `${nextMonth}-01` })
-            .where(eq(bookings.id, payment.bookingId));
+        const webhookBooking = await db.select().from(bookings).where(eq(bookings.id, payment.bookingId)).get();
+        if (webhookBooking) {
+            await db
+                .update(bookings)
+                .set({ nextRentDueDate: `${nextMonth}-01`, status: "active" })
+                .where(eq(bookings.id, payment.bookingId));
+            
+            await db
+                .update(beds)
+                .set({ status: "occupied" })
+                .where(eq(beds.id, webhookBooking.bedId));
+        }
 
         return { success: true };
     }

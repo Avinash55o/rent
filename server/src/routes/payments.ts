@@ -213,9 +213,14 @@ paymentsRoute.get("/", requireAdmin(), zValidator("query", paginationSchema), as
             notes: payments.notes,
             paidAt: payments.paidAt,
             createdAt: payments.createdAt,
+            roomName: rooms.name,
+            bedName: beds.name,
         })
         .from(payments)
         .leftJoin(users, eq(payments.tenantId, users.id))
+        .leftJoin(bookings, eq(payments.bookingId, bookings.id))
+        .leftJoin(beds, eq(bookings.bedId, beds.id))
+        .leftJoin(rooms, eq(beds.roomId, rooms.id))
         .orderBy(desc(payments.createdAt))
         .limit(limit)
         .offset(offset)

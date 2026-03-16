@@ -40,6 +40,16 @@ export default function AdminRoomsPage() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingRoom, setEditingRoom] = useState<RoomData | null>(null);
+  const [editingBeds, setEditingBeds] = useState<Record<number, { name: string; monthlyRent: number }>>({});
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean; roomId: number | null }>({
+    isOpen: false,
+    roomId: null,
+  });
+  const [deleting, setDeleting] = useState(false);
 
   // Form state for new room
   const [roomName, setRoomName] = useState("");
@@ -113,6 +123,60 @@ export default function AdminRoomsPage() {
     }
   };
 
+  const handleEditClick = (room: RoomData) => {
+    setEditingRoom(room);
+    const bedEdits: Record<number, { name: string; monthlyRent: number }> = {};
+    room.beds.forEach((b) => {
+      bedEdits[b.id] = { name: b.name, monthlyRent: b.monthlyRent };
+    });
+    setEditingBeds(bedEdits);
+    setEditModalOpen(true);
+  };
+
+  const updateEditingBed = (bedId: number, field: "name" | "monthlyRent", value: string | number) => {
+    setEditingBeds((prev) => ({
+      ...prev,
+      [bedId]: { ...prev[bedId], [field]: value }
+    }));
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingRoom) return;
+    setSavingEdit(true);
+    try {
+      await api.put(`/api/rooms/${editingRoom.id}`, { name: editingRoom.name, description: editingRoom.description });
+      
+      const updates = Object.entries(editingBeds).map(([bedId, data]) => {
+         return api.put(`/api/rooms/${editingRoom.id}/beds/${bedId}`, data);
+      });
+      await Promise.all(updates);
+
+      toast.success("Room updated successfully!");
+      setEditModalOpen(false);
+      fetchRooms();
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, "Failed to update room"));
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const confirmDeleteRoom = async () => {
+    if (!confirmModal.roomId) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/api/rooms/${confirmModal.roomId}`);
+      toast.success("Room deleted successfully!");
+      setConfirmModal({ isOpen: false, roomId: null });
+      fetchRooms();
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, "Failed to delete room"));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "available":
@@ -167,7 +231,19 @@ export default function AdminRoomsPage() {
               className="card bg-base-100 shadow-md border border-base-200"
             >
               <div className="card-body p-5">
-                <h3 className="card-title text-lg">{room.name}</h3>
+                <div className="flex items-center justify-between mb-1">
+                  <h3 className="card-title text-lg m-0">{room.name}</h3>
+                  <div className="flex gap-1">
+                    <button 
+                      className="btn btn-ghost btn-xs text-error px-2" 
+                      onClick={() => setConfirmModal({ isOpen: true, roomId: room.id })}
+                      title="Delete Room"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                    <button className="btn btn-ghost btn-xs" onClick={() => handleEditClick(room)}>Edit</button>
+                  </div>
+                </div>
                 {room.description && (
                   <p className="text-sm text-base-content/60">
                     {room.description}
@@ -288,6 +364,97 @@ export default function AdminRoomsPage() {
             Create Room
           </button>
         </form>
+      </Modal>
+
+      {/* Edit Room Modal */}
+      <Modal open={editModalOpen} onClose={() => setEditModalOpen(false)} title="Edit Room & Beds">
+        <form onSubmit={handleSaveEdit} className="space-y-4">
+          <div className="form-control">
+            <label className="label">
+              <span className="label-text">Room Name</span>
+            </label>
+            <input
+              type="text"
+              className="input input-bordered w-full"
+              value={editingRoom?.name || ""}
+              onChange={(e) => setEditingRoom(prev => prev ? { ...prev, name: e.target.value } : null)}
+              required
+            />
+          </div>
+          <div className="form-control">
+            <label className="label">
+              <span className="label-text">Description</span>
+            </label>
+            <input
+              type="text"
+              className="input input-bordered w-full"
+              value={editingRoom?.description || ""}
+              onChange={(e) => setEditingRoom(prev => prev ? { ...prev, description: e.target.value } : null)}
+            />
+          </div>
+
+          <div>
+            <label className="label-text font-medium mb-2 block">Beds (Edit details)</label>
+            <div className="space-y-2">
+              {editingRoom?.beds.map((bed) => (
+                <div key={bed.id} className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    className="input input-bordered input-sm flex-1"
+                    value={editingBeds[bed.id]?.name || ""}
+                    onChange={(e) => updateEditingBed(bed.id, "name", e.target.value)}
+                    required
+                  />
+                  <input
+                    type="text" inputMode="numeric" pattern="[0-9]*"
+                    className="input input-bordered input-sm w-28"
+                    value={editingBeds[bed.id]?.monthlyRent}
+                    onChange={(e) => updateEditingBed(bed.id, "monthlyRent", Number(e.target.value) || 0)}
+                    required
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            className={`btn btn-primary w-full ${savingEdit ? "btn-disabled" : ""}`}
+            disabled={savingEdit}
+          >
+            {savingEdit && <span className="loading loading-spinner loading-sm"></span>}
+            Save Changes
+          </button>
+        </form>
+      </Modal>
+
+      {/* Confirmation Modal */}
+      <Modal
+        open={confirmModal.isOpen}
+        onClose={() => setConfirmModal({ isOpen: false, roomId: null })}
+        title="Delete Room"
+      >
+        <div className="space-y-4">
+          <p className="text-base-content/80">
+            Are you sure you want to completely delete this room and all its beds? This cannot be undone.
+          </p>
+          <div className="flex gap-3 justify-end mt-6">
+            <button
+              className="btn btn-ghost"
+              onClick={() => setConfirmModal({ isOpen: false, roomId: null })}
+            >
+              Cancel
+            </button>
+            <button
+              className={`btn btn-error ${deleting ? "btn-disabled" : ""}`}
+              onClick={confirmDeleteRoom}
+              disabled={deleting}
+            >
+              {deleting && <span className="loading loading-spinner loading-sm"></span>}
+              Yes, Delete
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

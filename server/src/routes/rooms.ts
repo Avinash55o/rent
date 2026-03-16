@@ -7,12 +7,12 @@
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { Env } from "../types/env";
 import type { JwtPayload } from "../types/api";
 import { ok, err } from "../types/api";
 import { createDb } from "../db/client";
-import { rooms, beds } from "../db/schema";
+import { rooms, beds, bookings } from "../db/schema";
 import { createRoomSchema, updateBedSchema, updateRoomSchema, addBedToRoomSchema } from "../validators";
 import { nowISO } from "../utils";
 import { requireAdmin } from "../middleware/auth";
@@ -144,6 +144,15 @@ roomsRoute.delete("/:id", requireAdmin(), async (c) => {
         );
     }
 
+    const bedIds = roomBeds.map(b => b.id);
+    if (bedIds.length > 0) {
+        // Check if there are any bookings for these beds
+        const existingBookings = await db.select().from(bookings).where(inArray(bookings.bedId, bedIds)).get();
+        if (existingBookings) {
+             return c.json(err("Cannot delete room: one or more beds have booking history. Deleting would break payment records."), 409);
+        }
+    }
+
     // Delete all beds in the room
     await db.delete(beds).where(eq(beds.roomId, roomId));
 
@@ -228,6 +237,11 @@ roomsRoute.delete("/:id/beds/:bedId", requireAdmin(), async (c) => {
 
     if (bed.status !== "available") {
         return c.json(err("Cannot delete bed that is occupied or reserved"), 409);
+    }
+
+    const existingBookings = await db.select().from(bookings).where(eq(bookings.bedId, bedId)).get();
+    if (existingBookings) {
+         return c.json(err("Cannot delete bed: it has booking history. Deleting would break payment records."), 409);
     }
 
     await db.delete(beds).where(eq(beds.id, bedId));

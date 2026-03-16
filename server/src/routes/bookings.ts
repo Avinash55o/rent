@@ -18,17 +18,19 @@
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { eq, and, desc, or } from "drizzle-orm";
+import { eq, and, desc, or, inArray } from "drizzle-orm";
+import { z } from "zod";
 import type { Env } from "../types/env";
 import type { JwtPayload } from "../types/api";
 import { ok, err } from "../types/api";
 import { createDb } from "../db/client";
-import { bookings, beds, deposits, users } from "../db/schema";
+import { bookings, beds, deposits, users, payments, rooms } from "../db/schema";
 import {
     createBookingSchema,
     endBookingSchema,
     verifyDepositSchema,
 } from "../validators";
+import { getAllSettings } from "../services/settings.service";
 import { createRazorpayOrder } from "../services/razorpay.service";
 import { verifyRazorpaySignature, nowISO, getNextRentDueDate, toDateString, generateReceiptNumber } from "../utils";
 import { requireAdmin, requireAuth } from "../middleware/auth";
@@ -44,7 +46,7 @@ bookingsRoute.post(
     zValidator("json", createBookingSchema),
     async (c) => {
         const { sub: tenantId } = c.get("user");
-        const { bedId, depositAmount } = c.req.valid("json");
+        const { bedId, moveInDate } = c.req.valid("json");
         const db = createDb(c.env.DB);
 
         // Check tenant doesn't already have an active or pending_deposit booking
@@ -103,7 +105,7 @@ bookingsRoute.post(
                     bedId,
                     status: "pending_deposit",
                     monthlyRent: bed.monthlyRent,
-                    moveInDate: toDateString(today),
+                    moveInDate,
                     nextRentDueDate: getNextRentDueDate(today),
                     createdAt: now,
                 })
@@ -121,6 +123,10 @@ bookingsRoute.post(
             return c.json(err("Failed to create booking"), 500);
         }
 
+        // Fetch official deposit amount from global settings
+        const settings = await getAllSettings(db);
+        const officialDepositAmount = parseInt(settings.deposit_amount);
+
         // Create Razorpay order for deposit
         const receipt = generateReceiptNumber();
         let order;
@@ -129,7 +135,7 @@ bookingsRoute.post(
                 c.env.RAZORPAY_KEY_ID,
                 c.env.RAZORPAY_KEY_SECRET,
                 {
-                    amount: depositAmount,
+                    amount: officialDepositAmount,
                     receipt,
                     notes: { tenantName: tenant.name, type: "deposit" },
                 }
@@ -147,7 +153,7 @@ bookingsRoute.post(
             await db.insert(deposits).values({
                 bookingId: booking.id,
                 tenantId,
-                amount: depositAmount,
+                amount: officialDepositAmount,
                 status: "held",
                 razorpayOrderId: order.id,
                 createdAt: now,
@@ -165,7 +171,7 @@ bookingsRoute.post(
                 bookingId: booking.id,
                 razorpayOrderId: order.id,
                 razorpayKeyId: c.env.RAZORPAY_KEY_ID,
-                amount: depositAmount,
+                amount: officialDepositAmount,
                 currency: "INR",
             }),
             201
@@ -234,12 +240,12 @@ bookingsRoute.post(
         if (booking) {
             await db
                 .update(bookings)
-                .set({ status: "active" })
+                .set({ status: "deposit_paid" })
                 .where(eq(bookings.id, booking.id));
 
             await db
                 .update(beds)
-                .set({ status: "occupied" })
+                .set({ status: "reserved" })
                 .where(eq(beds.id, booking.bedId));
         }
 
@@ -257,7 +263,7 @@ bookingsRoute.get("/my", requireAuth(), async (c) => {
         .from(bookings)
         .where(and(
             eq(bookings.tenantId, tenantId),
-            or(eq(bookings.status, "active"), eq(bookings.status, "pending_deposit"))
+            or(eq(bookings.status, "active"), eq(bookings.status, "pending_deposit"), eq(bookings.status, "deposit_paid"))
         ))
         .get();
 
@@ -265,14 +271,61 @@ bookingsRoute.get("/my", requireAuth(), async (c) => {
 
     // Get bed and room info
     const bed = await db.select().from(beds).where(eq(beds.id, booking.bedId)).get();
+    const room = bed ? await db.select().from(rooms).where(eq(rooms.id, bed.roomId)).get() : null;
     const deposit = await db
         .select()
         .from(deposits)
         .where(eq(deposits.bookingId, booking.id))
         .get();
 
-    return c.json(ok({ booking, bed, deposit }));
+    const rentMonth = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
+    const currentMonthPayment = await db
+        .select()
+        .from(payments)
+        .where(and(
+            eq(payments.bookingId, booking.id),
+            eq(payments.rentMonth, rentMonth),
+            eq(payments.status, "completed")
+        ))
+        .get();
+
+    return c.json(ok({ booking, bed, room, deposit, isRentPaid: !!currentMonthPayment }));
 });
+
+// ─── PUT /api/bookings/my/move-in-date — TENANT ──────────────
+bookingsRoute.put(
+    "/my/move-in-date",
+    requireAuth(),
+    zValidator("json", z.object({ moveInDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })),
+    async (c) => {
+        const { sub: tenantId } = c.get("user");
+        const { moveInDate } = c.req.valid("json");
+        const db = createDb(c.env.DB);
+
+        const booking = await db
+            .select()
+            .from(bookings)
+            .where(and(
+                eq(bookings.tenantId, tenantId),
+                inArray(bookings.status, ["active", "pending_deposit", "deposit_paid"])
+            ))
+            .get();
+
+        if (!booking) return c.json(err("Booking not found"), 404);
+
+        const bed = await db.select().from(beds).where(eq(beds.id, booking.bedId)).get();
+        if (bed?.status === "occupied") {
+            return c.json(err("Cannot change move-in date after taking occupancy"), 403);
+        }
+
+        await db
+            .update(bookings)
+            .set({ moveInDate })
+            .where(eq(bookings.id, booking.id));
+
+        return c.json(ok({ message: "Move-in date updated successfully" }));
+    }
+);
 
 // ─── GET /api/bookings — ADMIN ────────────────────────────────
 bookingsRoute.get("/", requireAdmin(), async (c) => {

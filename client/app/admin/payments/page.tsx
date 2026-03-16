@@ -12,6 +12,9 @@ import { TableSkeleton } from "@/components/Skeleton";
 interface Payment {
   id: number;
   tenantId: number;
+  tenantName?: string;
+  roomName?: string;
+  bedName?: string;
   amount: number;
   type: string;
   status: string;
@@ -40,7 +43,7 @@ export default function AdminPaymentsPage() {
   const fetchPayments = async () => {
     try {
       const res = await api.get("/api/payments");
-      setPayments(res.data?.data || []);
+      setPayments(res.data?.data?.data || []);
     } catch { toast.error("Failed to load payments"); }
     finally { setLoading(false); }
   };
@@ -48,7 +51,7 @@ export default function AdminPaymentsPage() {
   const fetchTenants = async () => {
     try {
       const res = await api.get("/api/admin/tenants");
-      setTenants((res.data?.data || []).map((t: TenantOption) => ({ id: t.id, name: t.name, email: t.email })));
+      setTenants((res.data?.data?.data || []).map((t: TenantOption) => ({ id: t.id, name: t.name, email: t.email })));
     } catch { /* ignore */ }
   };
 
@@ -130,8 +133,9 @@ export default function AdminPaymentsPage() {
           <table className="table table-zebra">
             <thead>
               <tr>
-                <th>ID</th>
-                <th>Tenant</th>
+                <th>Payment ID</th>
+                <th>Tenant Name</th>
+                <th>Room & Bed</th>
                 <th>Month</th>
                 <th>Amount</th>
                 <th>Late Fee</th>
@@ -144,7 +148,18 @@ export default function AdminPaymentsPage() {
               {payments.map((p) => (
                 <tr key={p.id}>
                   <td>#{p.id}</td>
-                  <td>#{p.tenantId}</td>
+                  <td>
+                    <div className="font-medium">{p.tenantName || `Tenant #${p.tenantId}`}</div>
+                  </td>
+                  <td>
+                    {p.roomName && p.bedName ? (
+                      <div className="text-sm">
+                        {p.roomName} - {p.bedName}
+                      </div>
+                    ) : (
+                      <span className="text-base-content/50 text-sm">N/A</span>
+                    )}
+                  </td>
                   <td className="font-medium">{p.rentMonth}</td>
                   <td>₹{p.amount.toLocaleString()}</td>
                   <td>{p.lateFee > 0 ? <span className="text-error">₹{p.lateFee}</span> : "—"}</td>
@@ -173,7 +188,7 @@ export default function AdminPaymentsPage() {
           </div>
           <div className="form-control">
             <label className="label"><span className="label-text">Amount (₹)</span></label>
-            <input type="number" className="input input-bordered w-full" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} required min={1} />
+            <input type="text" inputMode="numeric" pattern="[0-9]*" className="input input-bordered w-full" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} required />
           </div>
           <div className="form-control">
             <label className="label"><span className="label-text">Rent Month</span></label>

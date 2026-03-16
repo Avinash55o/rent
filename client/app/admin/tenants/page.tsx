@@ -7,7 +7,7 @@ import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { Modal } from "@/components/Modal";
 import toast from "react-hot-toast";
 import Link from "next/link";
-import { Users, Plus, Eye, UserMinus } from "lucide-react";
+import { Users, Plus, Eye, UserMinus, Trash2 } from "lucide-react";
 import { TableSkeleton } from "@/components/Skeleton";
 
 interface Tenant {
@@ -49,6 +49,17 @@ export default function AdminTenantsPage() {
     bedId: "",
   });
 
+  // Confirmation modal state
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    type: "deactivate" | "delete" | null;
+    tenantId: number | null;
+  }>({
+    isOpen: false,
+    type: null,
+    tenantId: null,
+  });
+
   useEffect(() => {
     fetchTenants();
   }, []);
@@ -56,7 +67,7 @@ export default function AdminTenantsPage() {
   const fetchTenants = async () => {
     try {
       const res = await api.get("/api/admin/tenants");
-      setTenants(res.data?.data || []);
+      setTenants(res.data?.data?.data || []);
     } catch {
       toast.error("Failed to load tenants");
     } finally {
@@ -116,15 +127,38 @@ export default function AdminTenantsPage() {
     }
   };
 
-  const handleDeactivate = async (tenantId: number) => {
-    if (!confirm("Are you sure you want to deactivate this tenant? Their booking will be ended.")) return;
-    try {
-      await api.put(`/api/admin/tenants/${tenantId}/deactivate`);
-      toast.success("Tenant deactivated");
-      fetchTenants();
-    } catch {
-      toast.error("Failed to deactivate tenant");
+  const confirmAction = async () => {
+    if (!confirmModal.tenantId || !confirmModal.type) return;
+    const tenantId = confirmModal.tenantId;
+    const actionType = confirmModal.type;
+    
+    setConfirmModal({ isOpen: false, type: null, tenantId: null });
+
+    if (actionType === "deactivate") {
+      try {
+        await api.put(`/api/admin/tenants/${tenantId}/deactivate`);
+        toast.success("Tenant deactivated");
+        fetchTenants();
+      } catch {
+        toast.error("Failed to deactivate tenant");
+      }
+    } else if (actionType === "delete") {
+      try {
+        await api.delete(`/api/admin/tenants/${tenantId}`);
+        toast.success("Tenant deleted entirely");
+        fetchTenants();
+      } catch (err: unknown) {
+        toast.error(getErrorMessage(err, "Failed to delete tenant"));
+      }
     }
+  };
+
+  const handleDeactivate = (tenantId: number) => {
+    setConfirmModal({ isOpen: true, type: "deactivate", tenantId });
+  };
+
+  const handleDelete = (tenantId: number) => {
+    setConfirmModal({ isOpen: true, type: "delete", tenantId });
   };
 
   if (loading) {
@@ -211,6 +245,15 @@ export default function AdminTenantsPage() {
                           <UserMinus className="h-3 w-3" />
                         </button>
                       )}
+                      {!t.isActive && (
+                        <button
+                          className="btn btn-ghost btn-xs text-error"
+                          onClick={() => handleDelete(t.id)}
+                          title="Delete Tenant"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -292,6 +335,35 @@ export default function AdminTenantsPage() {
             Create Tenant
           </button>
         </form>
+      </Modal>
+
+      {/* Confirmation Modal */}
+      <Modal
+        open={confirmModal.isOpen}
+        onClose={() => setConfirmModal({ isOpen: false, type: null, tenantId: null })}
+        title={confirmModal.type === "deactivate" ? "Deactivate Tenant" : "Delete Tenant"}
+      >
+        <div className="space-y-4">
+          <p className="text-base-content/80">
+            {confirmModal.type === "deactivate"
+              ? "Are you sure you want to deactivate this tenant? Their booking will be ended and bed made available."
+              : "Are you sure you want to permanently delete this tenant and all their records? This cannot be undone."}
+          </p>
+          <div className="flex gap-3 justify-end mt-6">
+            <button
+              className="btn btn-ghost"
+              onClick={() => setConfirmModal({ isOpen: false, type: null, tenantId: null })}
+            >
+              Cancel
+            </button>
+            <button
+              className={`btn ${confirmModal.type === "delete" ? "btn-error" : "btn-warning"}`}
+              onClick={confirmAction}
+            >
+              {confirmModal.type === "delete" ? "Yes, Delete" : "Yes, Deactivate"}
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

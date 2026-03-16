@@ -9,6 +9,7 @@ import { StatCard } from "@/components/StatCard";
 import { openRazorpayCheckout } from "@/lib/razorpay";
 import toast from "react-hot-toast";
 import Link from "next/link";
+import { Modal } from "@/components/Modal";
 import {
   Bed,
   CalendarDays,
@@ -16,6 +17,7 @@ import {
   CreditCard,
   MapPin,
   Shield,
+  Edit2,
 } from "lucide-react";
 import { DashboardSkeleton } from "@/components/Skeleton";
 
@@ -40,6 +42,11 @@ interface BookingData {
     status: string;
     paidAt: string | null;
   } | null;
+  room: {
+    id: number;
+    name: string;
+  } | null;
+  isRentPaid: boolean;
 }
 
 export default function DashboardPage() {
@@ -47,6 +54,9 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [noBooking, setNoBooking] = useState(false);
   const [payingRent, setPayingRent] = useState(false);
+  const [moveInDateModalOpen, setMoveInDateModalOpen] = useState(false);
+  const [newMoveInDate, setNewMoveInDate] = useState("");
+  const [updatingDate, setUpdatingDate] = useState(false);
   const { user } = useAuth();
 
   useEffect(() => {
@@ -66,6 +76,22 @@ export default function DashboardPage() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleUpdateMoveInDate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMoveInDate) return;
+    setUpdatingDate(true);
+    try {
+      await api.put("/api/bookings/my/move-in-date", { moveInDate: newMoveInDate });
+      toast.success("Move-in date updated successfully!");
+      setMoveInDateModalOpen(false);
+      fetchBooking();
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err, "Failed to update move-in date"));
+    } finally {
+      setUpdatingDate(false);
     }
   };
 
@@ -95,7 +121,7 @@ export default function DashboardPage() {
       });
 
       // Verify payment
-      await api.post("/api/payments/verify", result);
+      await api.post("/api/payments/verify", { ...result, rentMonth });
       toast.success("Rent paid successfully!");
       fetchBooking(); // Refresh booking data
     } catch (err: unknown) {
@@ -126,7 +152,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { booking, bed, deposit } = bookingData!;
+  const { booking, bed, room, deposit } = bookingData!;
 
   return (
     <div>
@@ -146,7 +172,23 @@ export default function DashboardPage() {
         />
         <StatCard
           label="Move-in Date"
-          value={new Date(booking.moveInDate).toLocaleDateString("en-IN")}
+          value={
+            <div className="flex items-center gap-2">
+              <span>{new Date(booking.moveInDate).toLocaleDateString("en-IN")}</span>
+              {bed.status !== "occupied" && (
+                <button
+                  className="btn btn-ghost btn-xs btn-square"
+                  onClick={() => {
+                    setNewMoveInDate(booking.moveInDate);
+                    setMoveInDateModalOpen(true);
+                  }}
+                  title="Edit Move-In Date"
+                >
+                  <Edit2 className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          }
           icon={CalendarDays}
         />
         <StatCard
@@ -187,7 +229,7 @@ export default function DashboardPage() {
             <div>
               <p className="text-sm text-base-content/60">Room & Bed</p>
               <p className="font-medium flex items-center gap-1">
-                <MapPin className="h-4 w-4" /> {bed.name}
+                <MapPin className="h-4 w-4" /> {room ? `${room.name} - ` : ""}{bed.name}
               </p>
             </div>
             <div>
@@ -199,7 +241,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Pay Rent Button */}
-      {booking.status === "active" && (
+      {(booking.status === "active" || booking.status === "deposit_paid") && !bookingData!.isRentPaid && (
         <div className="card bg-primary/5 border border-primary/20">
           <div className="card-body flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
@@ -224,6 +266,29 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* Edit Move In Date Modal */}
+      <Modal open={moveInDateModalOpen} onClose={() => setMoveInDateModalOpen(false)} title="Update Move-In Date">
+        <form onSubmit={handleUpdateMoveInDate} className="space-y-4">
+          <div className="p-3 bg-base-200 rounded text-sm text-base-content/70">
+            You can change your move-in date before you pay the first month's rent.
+          </div>
+          <div className="form-control">
+            <label className="label"><span className="label-text">New Move-In Date</span></label>
+            <input
+              type="date"
+              className="input input-bordered w-full"
+              value={newMoveInDate}
+              onChange={(e) => setNewMoveInDate(e.target.value)}
+              min={new Date().toISOString().split("T")[0]}
+              required
+            />
+          </div>
+          <button type="submit" className={`btn btn-primary w-full ${updatingDate ? "btn-disabled" : ""}`} disabled={updatingDate}>
+            {updatingDate ? <span className="loading loading-spinner loading-sm"></span> : "Update Date"}
+          </button>
+        </form>
+      </Modal>
     </div>
   );
 }

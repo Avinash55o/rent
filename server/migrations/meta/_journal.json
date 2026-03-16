@@ -15,6 +15,13 @@
       "when": 1773540484802,
       "tag": "0001_small_mystique",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1773624897104,
+      "tag": "0002_right_black_panther",
+      "breakpoints": true
     }
   ]
 }

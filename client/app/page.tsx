@@ -11,6 +11,7 @@ import Link from "next/link";
 import { Bed, CheckCircle2, XCircle, Clock, Home } from "lucide-react";
 import { openRazorpayCheckout } from "@/lib/razorpay";
 import { RoomGridSkeleton } from "@/components/Skeleton";
+import { Modal } from "@/components/Modal";
 
 interface BedData {
   id: number;
@@ -31,16 +32,25 @@ export default function HomePage() {
   const [rooms, setRooms] = useState<RoomData[]>([]);
   const [loading, setLoading] = useState(true);
   const [bookingBedId, setBookingBedId] = useState<number | null>(null);
+  const [selectedBed, setSelectedBed] = useState<BedData | null>(null);
+  const [moveInDate, setMoveInDate] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [globalDeposit, setGlobalDeposit] = useState<number | null>(null);
   const { isAuthenticated, user } = useAuth();
 
   useEffect(() => {
-    api.get("/api/rooms")
-      .then((res) => setRooms(res.data?.data || []))
-      .catch(() => { /* backend may not be running */ })
-      .finally(() => setLoading(false));
+    Promise.all([
+      api.get("/api/rooms").catch(() => null),
+      api.get("/api/admin/settings").catch(() => null)
+    ]).then(([roomsRes, settingsRes]) => {
+      if (roomsRes?.data?.data) setRooms(roomsRes.data.data);
+      if (settingsRes?.data?.data?.deposit_amount) {
+        setGlobalDeposit(parseInt(settingsRes.data.data.deposit_amount));
+      }
+    }).finally(() => setLoading(false));
   }, []);
 
-  const handleBookBed = async (bed: BedData) => {
+  const handleBookClick = (bed: BedData) => {
     if (!isAuthenticated) {
       toast("Please login or sign up first", { icon: "🔒" });
       return;
@@ -49,24 +59,30 @@ export default function HomePage() {
       toast.error("Admins cannot book beds. Use the admin panel.");
       return;
     }
+    setSelectedBed(bed);
+    // Suggest today's date
+    const today = new Date().toISOString().split("T")[0];
+    setMoveInDate(today);
+    setModalOpen(true);
+  };
 
-    setBookingBedId(bed.id);
+  const handleConfirmBooking = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedBed || !moveInDate) return;
+    
+    setModalOpen(false);
+    setBookingBedId(selectedBed.id);
     try {
-      let depositAmount = bed.monthlyRent;
-      try {
-        const settingsRes = await api.get("/api/admin/settings");
-        const settings = settingsRes.data?.data;
-        if (settings?.deposit_amount) depositAmount = parseInt(settings.deposit_amount);
-      } catch { /* Use monthly rent as fallback */ }
+      let depositAmount = globalDeposit !== null ? globalDeposit : selectedBed.monthlyRent;
 
-      const res = await api.post("/api/bookings", { bedId: bed.id, depositAmount });
+      const res = await api.post("/api/bookings", { bedId: selectedBed.id, depositAmount, moveInDate });
       const { razorpayOrderId, razorpayKeyId, amount } = res.data.data;
 
       const paymentResult = await openRazorpayCheckout({
         razorpayKeyId,
         orderId: razorpayOrderId,
         amount: amount * 100,
-        description: `Security Deposit for ${bed.name}`,
+        description: `Security Deposit for ${selectedBed?.name}`,
         prefill: { name: user?.name, email: user?.email },
       });
 
@@ -149,7 +165,7 @@ export default function HomePage() {
                           {bed.status === "available" && (
                             <button
                               className={`btn btn-primary btn-sm ${bookingBedId === bed.id ? "btn-disabled" : ""}`}
-                              onClick={() => handleBookBed(bed)}
+                              onClick={() => handleBookClick(bed)}
                               disabled={bookingBedId === bed.id}
                             >
                               {bookingBedId === bed.id ? <span className="loading loading-spinner loading-xs"></span> : "Book"}
@@ -165,6 +181,30 @@ export default function HomePage() {
           )}
         </section>
       </main>
+
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Select Move-In Date">
+        <form onSubmit={handleConfirmBooking} className="space-y-4">
+          <div className="p-3 bg-base-200 rounded text-sm text-base-content/70">
+            You are booking <strong>{selectedBed?.name}</strong>. 
+            A fixed security deposit of <strong>₹{globalDeposit !== null ? globalDeposit.toLocaleString() : selectedBed?.monthlyRent.toLocaleString()}</strong> is required to reserve this bed.
+            Your first month's rent will be prorated automatically based on your actual move-in date.
+          </div>
+          <div className="form-control">
+            <label className="label"><span className="label-text">Move-In Date</span></label>
+            <input
+              type="date"
+              className="input input-bordered w-full"
+              value={moveInDate}
+              onChange={(e) => setMoveInDate(e.target.value)}
+              min={new Date().toISOString().split("T")[0]}
+              required
+            />
+          </div>
+          <button type="submit" className="btn btn-primary w-full">
+            Proceed to Pay Deposit
+          </button>
+        </form>
+      </Modal>
     </div>
   );
 }

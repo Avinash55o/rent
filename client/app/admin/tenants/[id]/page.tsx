@@ -365,12 +365,11 @@ export default function TenantDetailPage() {
           <div className="form-control">
             <label className="label"><span className="label-text">New Monthly Rent (₹)</span></label>
             <input
-              type="number"
+              type="text" inputMode="numeric" pattern="[0-9]*"
               className="input input-bordered w-full"
               value={newRent}
               onChange={(e) => setNewRent(e.target.value)}
               required
-              min={0}
             />
           </div>
           <label className="flex items-center gap-2 cursor-pointer">
@@ -409,21 +408,19 @@ export default function TenantDetailPage() {
           <div className="form-control">
             <label className="label"><span className="label-text">Refund Amount (₹)</span></label>
             <input
-              type="number"
+              type="text" inputMode="numeric" pattern="[0-9]*"
               className="input input-bordered w-full"
               value={endForm.refundAmount}
-              onChange={(e) => setEndForm((f) => ({ ...f, refundAmount: Number(e.target.value) }))}
-              min={0}
+              onChange={(e) => setEndForm((f) => ({ ...f, refundAmount: Number(e.target.value) || 0 }))}
             />
           </div>
           <div className="form-control">
             <label className="label"><span className="label-text">Deduction Amount (₹)</span></label>
             <input
-              type="number"
+              type="text" inputMode="numeric" pattern="[0-9]*"
               className="input input-bordered w-full"
               value={endForm.deductionAmount}
-              onChange={(e) => setEndForm((f) => ({ ...f, deductionAmount: Number(e.target.value) }))}
-              min={0}
+              onChange={(e) => setEndForm((f) => ({ ...f, deductionAmount: Number(e.target.value) || 0 }))}
             />
           </div>
           <div className="form-control">

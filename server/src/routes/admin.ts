@@ -12,7 +12,7 @@
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { eq, and, desc, count, like, or, sql } from "drizzle-orm";
+import { eq, and, desc, count, like, or, sql, inArray } from "drizzle-orm";
 import type { Env } from "../types/env";
 import type { JwtPayload } from "../types/api";
 import { ok, err } from "../types/api";
@@ -52,7 +52,7 @@ adminRoute.get("/dashboard", async (c) => {
         db
             .select({ count: count() })
             .from(bookings)
-            .where(eq(bookings.status, "active"))
+            .where(inArray(bookings.status, ["active", "deposit_paid"]))
             .get(),
     ]);
 
@@ -117,7 +117,7 @@ adminRoute.get("/tenants", zValidator("query", paginationSchema), async (c) => {
         .where(searchCondition ? and(eq(users.role, "tenant"), searchCondition) : eq(users.role, "tenant"))
         .leftJoin(
             bookings,
-            and(eq(bookings.tenantId, users.id), eq(bookings.status, "active"))
+            and(eq(bookings.tenantId, users.id), inArray(bookings.status, ["active", "deposit_paid"]))
         )
         .leftJoin(beds, eq(beds.id, bookings.bedId))
         .leftJoin(rooms, eq(rooms.id, beds.roomId))
@@ -191,7 +191,7 @@ adminRoute.get("/tenants/:id", async (c) => {
         })
         .from(users)
         .where(and(eq(users.id, tenantId), eq(users.role, "tenant")))
-        .leftJoin(bookings, and(eq(bookings.tenantId, users.id), eq(bookings.status, "active")))
+        .leftJoin(bookings, and(eq(bookings.tenantId, users.id), inArray(bookings.status, ["active", "deposit_paid"])))
         .leftJoin(beds, eq(beds.id, bookings.bedId))
         .leftJoin(rooms, eq(rooms.id, beds.roomId))
         .leftJoin(deposits, eq(deposits.bookingId, bookings.id))
@@ -284,7 +284,7 @@ adminRoute.put(
             await db
                 .update(bookings)
                 .set({ monthlyRent })
-                .where(eq(bookings.status, "active"));
+                .where(inArray(bookings.status, ["active", "deposit_paid"]));
 
             // Update all beds' monthly rent as well
             await db.update(beds).set({ monthlyRent });
@@ -295,7 +295,7 @@ adminRoute.put(
             const updated = await db
                 .update(bookings)
                 .set({ monthlyRent })
-                .where(and(eq(bookings.tenantId, tenantId), eq(bookings.status, "active")))
+                .where(and(eq(bookings.tenantId, tenantId), inArray(bookings.status, ["active", "deposit_paid"])))
                 .returning()
                 .get();
 
@@ -326,7 +326,7 @@ adminRoute.put("/tenants/:id/deactivate", async (c) => {
     const activeBooking = await db
         .select()
         .from(bookings)
-        .where(and(eq(bookings.tenantId, tenantId), eq(bookings.status, "active")))
+        .where(and(eq(bookings.tenantId, tenantId), inArray(bookings.status, ["active", "deposit_paid"])))
         .get();
 
     if (activeBooking) {
@@ -391,7 +391,7 @@ adminRoute.delete("/tenants/:id", adminDeleteRateLimit(), async (c) => {
 
     // Free up any beds that are reserved or occupied by this tenant
     for (const booking of tenantBookings) {
-        if (booking.status === "active" || booking.status === "pending_deposit") {
+        if (booking.status === "active" || booking.status === "pending_deposit" || booking.status === "deposit_paid") {
             // Free up the bed
             await db
                 .update(beds)
@@ -597,7 +597,7 @@ adminRoute.get("/export/tenants", async (c) => {
         })
         .from(users)
         .where(eq(users.role, "tenant"))
-        .leftJoin(bookings, and(eq(bookings.tenantId, users.id), eq(bookings.status, "active")))
+        .leftJoin(bookings, and(eq(bookings.tenantId, users.id), inArray(bookings.status, ["active", "deposit_paid"])))
         .leftJoin(beds, eq(beds.id, bookings.bedId))
         .leftJoin(rooms, eq(rooms.id, beds.roomId))
         .all();
