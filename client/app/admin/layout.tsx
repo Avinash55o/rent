@@ -33,15 +33,18 @@ export default function AdminLayout({
   return (
     <ProtectedRoute requiredRole="admin">
       <div className="min-h-screen flex flex-col">
-        <Navbar />
+        <Navbar hideMobileMenu />
         <div className="flex-1 flex">
           <div className="drawer lg:drawer-open">
             <input id="admin-drawer" type="checkbox" className="drawer-toggle" />
             <div className="drawer-content flex flex-col">
-              <div className="lg:hidden p-4 border-b border-base-200">
-                <label htmlFor="admin-drawer" className="btn btn-ghost btn-sm">
-                  <Menu className="h-5 w-5" /> Menu
+              <div className="lg:hidden flex items-center gap-4 p-4 border-b border-base-200 bg-base-100">
+                <label htmlFor="admin-drawer" className="btn btn-ghost btn-sm btn-square">
+                  <Menu className="h-5 w-5" />
                 </label>
+                <h1 className="text-lg font-bold">
+                  {sidebarLinks.find((link) => link.href === pathname)?.label || "Admin Panel"}
+                </h1>
               </div>
               <main className="flex-1 p-4 sm:p-6 lg:p-8">
                 {children}
@@ -61,6 +64,10 @@ export default function AdminLayout({
                         className={
                           pathname === link.href ? "active font-medium" : ""
                         }
+                        onClick={() => {
+                          const drawer = document.getElementById("admin-drawer") as HTMLInputElement;
+                          if (drawer) drawer.checked = false;
+                        }}
                       >
                         <link.icon className="h-4 w-4" />
                         {link.label}

@@ -29,7 +29,7 @@ export default function DashboardLayout({
   return (
     <ProtectedRoute requiredRole="tenant">
       <div className="min-h-screen flex flex-col">
-        <Navbar />
+        <Navbar hideMobileMenu />
         <div className="flex-1 flex">
           {/* Mobile drawer */}
           <div className="drawer lg:drawer-open">
@@ -40,13 +40,16 @@ export default function DashboardLayout({
             />
             <div className="drawer-content flex flex-col">
               {/* Mobile menu button */}
-              <div className="lg:hidden p-4 border-b border-base-200">
+              <div className="lg:hidden flex items-center gap-4 p-4 border-b border-base-200 bg-base-100">
                 <label
                   htmlFor="dashboard-drawer"
-                  className="btn btn-ghost btn-sm"
+                  className="btn btn-ghost btn-sm btn-square"
                 >
-                  <Menu className="h-5 w-5" /> Menu
+                  <Menu className="h-5 w-5" />
                 </label>
+                <h1 className="text-lg font-bold">
+                  {sidebarLinks.find((link) => link.href === pathname)?.label || "Tenant Dashboard"}
+                </h1>
               </div>
               {/* Main content */}
               <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto w-full">
@@ -67,6 +70,10 @@ export default function DashboardLayout({
                         className={
                           pathname === link.href ? "active font-medium" : ""
                         }
+                        onClick={() => {
+                          const drawer = document.getElementById("dashboard-drawer") as HTMLInputElement;
+                          if (drawer) drawer.checked = false;
+                        }}
                       >
                         <link.icon className="h-4 w-4" />
                         {link.label}
