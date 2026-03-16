@@ -62,7 +62,7 @@ export default function AdminLayout({
                       <Link
                         href={link.href}
                         className={
-                          pathname === link.href ? "active font-medium" : ""
+                          pathname === link.href ? "active font-medium bg-base-200" : ""
                         }
                         onClick={() => {
                           const drawer = document.getElementById("admin-drawer") as HTMLInputElement;

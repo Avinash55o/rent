@@ -68,7 +68,7 @@ export default function DashboardLayout({
                       <Link
                         href={link.href}
                         className={
-                          pathname === link.href ? "active font-medium" : ""
+                          pathname === link.href ? "active font-medium bg-base-200" : ""
                         }
                         onClick={() => {
                           const drawer = document.getElementById("dashboard-drawer") as HTMLInputElement;
